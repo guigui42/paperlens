@@ -6,7 +6,8 @@ test.beforeEach(async ({ page }) => {
     window.cspViolations = [];
     document.addEventListener("securitypolicyviolation", event => window.cspViolations.push(event.violatedDirective));
   });
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response.headers()["referrer-policy"]).toBe("same-origin");
 });
 
 test.afterEach(async ({ page }) => {

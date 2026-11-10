@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,7 +72,7 @@ func (s *Server) protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'; object-src 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if r.Host != origin.Host {
@@ -80,6 +81,23 @@ func (s *Server) protect(next http.Handler) http.Handler {
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			if r.Header.Get("Origin") != s.config.Origin {
+				site := r.Header.Get("Sec-Fetch-Site")
+				switch site {
+				case "", "same-origin", "same-site", "cross-site", "none":
+				default:
+					site = "other"
+				}
+				referrerMatches := false
+				if ref, err := url.Parse(r.Referer()); err == nil {
+					referrerMatches = ref.Scheme == origin.Scheme && ref.Host == origin.Host && ref.User == nil
+				}
+				slog.Warn("request origin rejected",
+					"origin_missing", r.Header.Get("Origin") == "",
+					"origin_opaque", r.Header.Get("Origin") == "null",
+					"referrer_missing", r.Referer() == "",
+					"referrer_matches", referrerMatches,
+					"host_matches", r.Host == origin.Host,
+					"fetch_site", site)
 				http.Error(w, "Same-origin request required", http.StatusForbidden)
 				return
 			}

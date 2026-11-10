@@ -9,6 +9,12 @@ build, CDN, vector database, archive replica, or chatbot.
 the configured Paperless account.** Host checks and browser cookies are not
 authentication. Do not expose this service publicly.
 
+The browser policy is `Referrer-Policy: same-origin`: it sends no referrer to
+other origins while keeping same-origin fetches compatible with WebKit's
+`Origin` handling. Explicit missing, opaque (`null`) and foreign origins are
+still rejected on every mutation, even when Referer or fetch-metadata headers
+claim same-origin. A valid CSRF token is required separately.
+
 ## Try the fictional archive
 
 Requires Go 1.27. No Paperless service, Copilot credentials, or model usage:

@@ -1,13 +1,14 @@
 # Validation record
 
-All fixture documents and browser artifacts are fictional. No household archive,
-household token, or private repository data was used.
+All fixture documents and published browser artifacts are fictional or blank
+landing pages. Private deployment checks and credentials are kept out of this
+public record. Hosted relevance evaluations use only the synthetic archive.
 
 ## Verified locally
 
 - Go 1.27.3 compilation, deterministic contracts, `go vet`, configured
   golangci-lint 2.15.0, and race-detector tests.
-- Paperless 3.3/API v10 contract source checked for version headers, query/filter
+- Paperless 3.3 and 3.4.2/API v10 contract source checked for version headers, query/filter
   parameters, metadata pagination, upload UUIDs, and paginated ingestion tasks.
   HTTP fixtures cover denied authentication, rate limiting, redirects,
   malformed/bounded responses, filters, upload multipart data and task IDs.
@@ -28,7 +29,7 @@ household token, or private repository data was used.
   Only the three application tools are offered. No inference credential was
   supplied to this lifecycle check.
 
-The deterministic race-test coverage is 89.3% for the Paperless integration and
+The initial deterministic race-test coverage was 89.3% for the Paperless integration and
 85.9% for search. Web handlers are 76.1%; configuration is 90.9%. CLI-dependent
 checks run separately from the ordinary test suite, so ordinary SDK-adapter
 coverage is not a claim that the credential-dependent inference path was tested.
@@ -63,20 +64,52 @@ pipeline meet the threshold on these fixtures. The report includes limits and
 elapsed time. Run `go run ./cmd/evaluate -live` with an explicitly configured
 server identity to evaluate actual inference on synthetic data.
 
+## Hosted synthetic relevance result
+
+A subsequent real hosted evaluation used `gpt-6.1-sol` through the isolated
+Copilot SDK/CLI pair. It completed all 30 cases in 454.18 seconds:
+
+| Measure | Result |
+|---|---|
+| Answerable Hit@3 | 24/24 (100%) |
+| Correct no-match decisions | 6/6 |
+| Keyword fallbacks | 0 |
+| Original synthetic lexical Hit@3 | 24/24 (100%) |
+
+This run used a real model, not the deterministic fake agent. IDs and quotes were
+validated by the production search engine. Limits remained six search calls,
+100 unique candidates, 12 excerpts and 8,000 characters per excerpt. The runtime
+directory was empty afterward, including session transcripts and logs.
+
+The fixture baseline also scores 100%, so this result does not demonstrate
+improvement over a real Paperless index or measure private-archive recall.
+
+## In-app WebKit origin regression
+
+The real in-app browser reproduced a rejected HTMX submission at the correct
+canonical origin. With HTMX 4's `mode: same-origin` fetch and
+`Referrer-Policy: no-referrer`, WebKit sent `Origin: null`, no Referer, and
+`Sec-Fetch-Site: same-origin`. Host matched the configured origin.
+
+`Referrer-Policy: same-origin` fixes the legitimate request without admitting
+opaque or foreign origins and still suppresses cross-origin referrers. The
+actual in-app frontend now passes search/poll and cancellation. An empty-file
+upload form reaches backend validation and is rejected before any Paperless
+upload. Regression tests retain strict Origin, Host and CSRF checks; normal
+Playwright runs also assert the browser policy header.
+
 ## Unverified boundaries
 
-- Live Copilot authentication, entitlement, model relevance and adversarial
-  model behavior: no server identity was supplied. No ambient user credentials
-  were reused. The configurable default `gpt-5.4` follows the pinned SDK setup
-  example and is checked against the runtime model list before inference.
-- Live Paperless deployment behavior: only versioned upstream source and
-  deterministic HTTP contracts were used. Connect a dedicated integration
-  identity in a controlled environment before relying on production retrieval.
+- Model behavior outside the 30 synthetic cases, exhaustive prompt-injection
+  resistance and relevance on private archives are not established by this run.
+  Each deployment must verify its own identity, entitlement and model policy.
+- Live ingestion was intentionally not exercised by uploading a real file.
+  Upload outcome/restart/duplicate handling is covered by deterministic fixtures.
 - Local Docker execution: the local daemon is unavailable, so container
   execution was validated on Linux amd64 in GitHub Actions instead. Linux arm64
   has a pinned artifact in the Dockerfile but was not execution-tested.
-- Real household search recall: requires a separately authorized evaluation.
-  This implementation intentionally does not query private documents.
+- Real household search recall requires a separately authorized evaluation.
+  No private archive documents or URLs are included in fixtures or artifacts.
 
 ## Reproducible runtime check
 
