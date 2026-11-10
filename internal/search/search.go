@@ -68,6 +68,27 @@ type Agent interface {
 	Rank(context.Context, string, Tools) (Ranking, error)
 }
 
+// Starter is optionally implemented by an Agent whose per-search runtime can
+// start before retrieval, so start-up overlaps the original Paperless query.
+// The context only bounds start-up. On error Begin returns no Run and has
+// already released anything it started.
+type Starter interface {
+	Begin(context.Context) (Run, error)
+}
+
+// Run is one started per-search runtime. Rank may be called at most once.
+// Close releases the runtime if Rank did not; it is safe to call after Rank
+// and the engine always calls it.
+type Run interface {
+	Rank(context.Context, string, Tools) (Ranking, error)
+	Close() error
+}
+
+type started struct {
+	run Run
+	err error
+}
+
 // Result contains canonical metadata and validated evidence.
 type Result struct {
 	Document       paperless.Document
@@ -118,11 +139,13 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 	}
 	// Timings and counts only: never log query text, titles or OCR.
 	start, mark := time.Now(), time.Now()
-	var metadataTime, paperlessTime, prefetchTime, agentTime time.Duration
+	var metadataTime, paperlessTime, prefetchTime, agentTime, startWaitTime time.Duration
 	var j *job
+	var overlap bool
 	defer func() {
 		attrs := []any{"mode", out.Mode, "failed", err != nil, "metadata_ms", metadataTime.Milliseconds(), "paperless_ms", paperlessTime.Milliseconds(),
-			"prefetch_ms", prefetchTime.Milliseconds(), "agent_ms", agentTime.Milliseconds(), "total_ms", time.Since(start).Milliseconds(), "results", len(out.Results)}
+			"prefetch_ms", prefetchTime.Milliseconds(), "agent_ms", agentTime.Milliseconds(), "overlap", overlap, "start_wait_ms", startWaitTime.Milliseconds(),
+			"total_ms", time.Since(start).Milliseconds(), "results", len(out.Results)}
 		if j != nil {
 			j.mu.Lock()
 			attrs = append(attrs, "search_calls", j.calls, "candidates", len(j.docs), "excerpts", len(j.evidence), "prefetched", len(j.seed.Excerpts))
@@ -140,6 +163,28 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 	}
 	excluded, policyErr := e.exclusionIDs(v)
 	useAI := !keyword && e.Agent != nil && policyErr == nil
+	var begun chan started
+	if starter, ok := e.Agent.(Starter); ok && useAI {
+		overlap = true
+		begun = make(chan started, 1)
+		go func() {
+			run, beginErr := starter.Begin(ctx)
+			begun <- started{run, beginErr}
+		}()
+		// Every exit releases the runtime: an unconsumed start is awaited and
+		// closed so no CLI process or state directory outlives Run. A failed
+		// Paperless query does not interrupt start-up; ctx still bounds it.
+		defer func() {
+			if begun == nil {
+				return
+			}
+			if b := <-begun; b.err == nil && b.run != nil {
+				if closeErr := b.run.Close(); closeErr != nil {
+					slog.Warn("unused AI runtime cleanup failed")
+				}
+			}
+		}()
+	}
 	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
 	if useAI && e.Limits.Searches > 1 {
 		// Keep room for model expansions so a broad original query cannot
@@ -175,7 +220,26 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		j.prefetch(ctx, query)
 		prefetchTime = time.Since(mark)
 		mark = time.Now()
-		rank, agentErr := e.Agent.Rank(ctx, query, j)
+		var rank Ranking
+		var agentErr error
+		if begun != nil {
+			b := <-begun
+			begun = nil
+			startWaitTime = time.Since(mark)
+			switch {
+			case b.err != nil:
+				agentErr = b.err
+			case b.run == nil:
+				agentErr = ErrAIRuntime
+			default:
+				rank, agentErr = b.run.Rank(ctx, query, j)
+				if closeErr := b.run.Close(); closeErr != nil {
+					agentErr = closeErr
+				}
+			}
+		} else {
+			rank, agentErr = e.Agent.Rank(ctx, query, j)
+		}
 		agentTime = time.Since(mark)
 		if ctx.Err() != nil {
 			return Output{}, ctx.Err()

@@ -219,71 +219,148 @@ Return ONLY JSON {"results":[{"id":123,"quote":"exact text","strength":"strong"}
 strength is strong or weak. A weak result is a possible match, not a definitive answer.
 Use {"results":[]} when no supplied evidence answers the query. No prose, markdown, URLs, titles, or extra fields.`
 
+// timing holds counts and durations only: never prompts, titles or OCR.
+type timing struct {
+	mu                                      sync.Mutex
+	start, models, session, inference, done time.Duration
+	modelCached                             bool
+	promptChars, modelCalls, toolCalls      int
+	inputTokens, outputTokens, reasoning    int64
+}
+
+func (t *timing) log(model string, overlap, ranked bool, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	slog.Info("copilot timing", "model", model, "failed", err != nil, "overlap", overlap, "ranked", ranked, "start_ms", t.start.Milliseconds(), "models_ms", t.models.Milliseconds(),
+		"models_cached", t.modelCached, "session_ms", t.session.Milliseconds(), "inference_ms", t.inference.Milliseconds(), "cleanup_ms", t.done.Milliseconds(),
+		"prompt_chars", t.promptChars, "model_calls", t.modelCalls, "tool_calls", t.toolCalls, "input_tokens", t.inputTokens, "output_tokens", t.outputTokens, "reasoning_tokens", t.reasoning)
+}
+
+// run is one started private runtime. It owns its temp directory and CLI
+// process until release, which happens exactly once.
+type run struct {
+	a       *Agent
+	dir     string
+	client  *sdk.Client
+	entry   modelEntry
+	overlap bool
+	claimed atomic.Bool
+	stats   timing
+}
+
 // Rank starts a private runtime, verifies model availability, and deletes local state.
-func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking search.Ranking, err error) {
+func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (search.Ranking, error) {
+	r, err := a.begin(ctx, false)
+	if err != nil {
+		return search.Ranking{}, err
+	}
+	return r.Rank(ctx, query, t)
+}
+
+// Begin starts a private runtime and verifies model availability before the
+// search request exists, so start-up can overlap the original Paperless query.
+func (a *Agent) Begin(ctx context.Context) (search.Run, error) {
+	r, err := a.begin(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (a *Agent) begin(ctx context.Context, overlap bool) (r *run, err error) {
+	if a.unhealthy.Load() {
+		return nil, search.ErrAIDisabled
+	}
+	r = &run{a: a, overlap: overlap}
+	defer func() {
+		if err != nil {
+			if r.client != nil {
+				if cleanErr := r.release(ctx.Err() != nil, nil); cleanErr != nil {
+					err = cleanErr
+				}
+			}
+			r.stats.log(a.Model, overlap, false, err)
+			r = nil
+		}
+	}()
+	if r.dir, err = os.MkdirTemp(a.Root, "search-"); err != nil {
+		return r, search.ErrAIRuntime
+	}
+	r.client = a.client(r.dir)
+	mark := time.Now()
+	if err = r.client.Start(ctx); err != nil {
+		return r, search.ErrAIRuntime
+	}
+	r.stats.start = time.Since(mark)
+	mark = time.Now()
+	r.entry, r.stats.modelCached = a.cachedModel(mark)
+	if !r.stats.modelCached {
+		models, listErr := r.client.ListModels(ctx)
+		if listErr != nil {
+			return r, search.ErrAIAuthentication
+		}
+		var found bool
+		if r.entry, found = selectModel(models, a.Model); !found {
+			return r, search.ErrAIModel
+		}
+		a.storeModel(r.entry, time.Now())
+	}
+	r.stats.models = time.Since(mark)
+	return r, nil
+}
+
+// release tears the runtime down with the same fail-closed checks as always.
+func (r *run) release(cancelled bool, session *sdk.Session) error {
+	var target cleanupSession
+	var id string
+	if session != nil {
+		target, id = session, session.SessionID
+	}
+	mark := time.Now()
+	err := r.a.cleanupRuntime(cancelled, r.dir, id, target, r.client, 30*time.Second)
+	r.stats.mu.Lock()
+	r.stats.done = time.Since(mark)
+	r.stats.mu.Unlock()
+	return err
+}
+
+// Close releases a runtime that was never ranked; after Rank it does nothing.
+func (r *run) Close() (err error) {
+	if !r.claimed.CompareAndSwap(false, true) {
+		return nil
+	}
+	err = r.release(false, nil)
+	r.stats.log(r.a.Model, r.overlap, false, err)
+	return err
+}
+
+// Rank runs one restricted session and always releases the runtime.
+func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking search.Ranking, err error) {
+	if !r.claimed.CompareAndSwap(false, true) {
+		return ranking, search.ErrAIRuntime
+	}
+	a, st := r.a, &r.stats
+	defer func() { st.log(a.Model, r.overlap, true, err) }()
+	var session *sdk.Session
+	defer func() {
+		if cleanErr := r.release(ctx.Err() != nil, session); cleanErr != nil {
+			err = cleanErr
+		}
+	}()
+	// An overlapped runtime may have started before another search latched
+	// the fail-closed state; never open a session after it.
 	if a.unhealthy.Load() {
 		return ranking, search.ErrAIDisabled
 	}
-	// Timings and counts only: never log prompts, titles or OCR.
-	var startTime, modelsTime, sessionTime, inferenceTime, cleanupTime time.Duration
-	var modelCached bool
-	var promptChars int
-	var usageMu sync.Mutex
-	var modelCalls, toolCalls int
-	var inputTokens, outputTokens, reasoningTokens int64
-	defer func() {
-		usageMu.Lock()
-		defer usageMu.Unlock()
-		slog.Info("copilot timing", "model", a.Model, "failed", err != nil, "start_ms", startTime.Milliseconds(), "models_ms", modelsTime.Milliseconds(),
-			"models_cached", modelCached, "session_ms", sessionTime.Milliseconds(), "inference_ms", inferenceTime.Milliseconds(), "cleanup_ms", cleanupTime.Milliseconds(),
-			"prompt_chars", promptChars, "model_calls", modelCalls, "tool_calls", toolCalls, "input_tokens", inputTokens, "output_tokens", outputTokens, "reasoning_tokens", reasoningTokens)
-	}()
-	dir, err := os.MkdirTemp(a.Root, "search-")
-	if err != nil {
-		return ranking, search.ErrAIRuntime
-	}
-	client := a.client(dir)
-	var session *sdk.Session
-	defer func() {
-		var target cleanupSession
-		var id string
-		if session != nil {
-			target, id = session, session.SessionID
-		}
-		mark := time.Now()
-		if cleanErr := a.cleanupRuntime(ctx.Err() != nil, dir, id, target, client, 30*time.Second); cleanErr != nil {
-			err = cleanErr
-		}
-		cleanupTime = time.Since(mark)
-	}()
-	mark := time.Now()
-	if err = client.Start(ctx); err != nil {
-		return ranking, search.ErrAIRuntime
-	}
-	startTime = time.Since(mark)
-	mark = time.Now()
-	entry, modelCached := a.cachedModel(mark)
-	if !modelCached {
-		models, listErr := client.ListModels(ctx)
-		if listErr != nil {
-			return ranking, search.ErrAIAuthentication
-		}
-		var found bool
-		if entry, found = selectModel(models, a.Model); !found {
-			return ranking, search.ErrAIModel
-		}
-		a.storeModel(entry, time.Now())
-	}
-	modelsTime = time.Since(mark)
 	prompt, err := requestPrompt(query, t)
 	if err != nil {
 		return ranking, err
 	}
-	promptChars = len(prompt)
-	mark = time.Now()
-	config := sessionConfig(ctx, dir, a.Model, t)
-	config.ReasoningEffort = a.effortFor(entry)
-	session, err = client.CreateSession(ctx, config)
+	st.promptChars = len(prompt)
+	mark := time.Now()
+	config := sessionConfig(ctx, r.dir, a.Model, t)
+	config.ReasoningEffort = a.effortFor(r.entry)
+	session, err = r.client.CreateSession(ctx, config)
 	if err != nil {
 		a.forgetModel()
 		return ranking, search.ErrAISession
@@ -292,24 +369,26 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 		a.forgetModel()
 		return ranking, search.ErrAISession
 	}
-	sessionTime = time.Since(mark)
+	st.session = time.Since(mark)
 	unsubscribe := session.On(func(event sdk.SessionEvent) {
-		usageMu.Lock()
-		defer usageMu.Unlock()
+		st.mu.Lock()
+		defer st.mu.Unlock()
 		switch d := event.Data.(type) {
 		case *sdk.AssistantUsageData:
-			modelCalls++
-			inputTokens += value(d.InputTokens)
-			outputTokens += value(d.OutputTokens)
-			reasoningTokens += value(d.ReasoningTokens)
+			st.modelCalls++
+			st.inputTokens += value(d.InputTokens)
+			st.outputTokens += value(d.OutputTokens)
+			st.reasoning += value(d.ReasoningTokens)
 		case *sdk.ToolExecutionStartData:
-			toolCalls++
+			st.toolCalls++
 		}
 	})
 	defer unsubscribe()
 	mark = time.Now()
 	reply, err := session.SendAndWait(ctx, sdk.MessageOptions{Prompt: prompt})
-	inferenceTime = time.Since(mark)
+	st.mu.Lock()
+	st.inference = time.Since(mark)
+	st.mu.Unlock()
 	if err != nil {
 		a.forgetModel()
 		return ranking, search.ErrAIInference
