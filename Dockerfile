@@ -27,6 +27,7 @@ COPY --from=build /out/paperlens /usr/local/bin/paperlens
 USER 10001:10001
 WORKDIR /work
 ENV PAPERLENS_LISTEN=0.0.0.0:8080 \
+    HOME=/tmp/paperlens-home \
     PAPERLENS_STATE_DIR=/data \
     PAPERLENS_RUNTIME_DIR=/tmp/paperlens-runtime \
     COPILOT_CLI_PATH=/opt/copilot/copilot
