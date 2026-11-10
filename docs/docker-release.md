@@ -84,6 +84,14 @@ until `PAPERLENS_UPLOAD_TYPES` is explicitly set after verifying parser support.
 
 ## Build and publish
 
+The first published release is
+[v0.1.1](https://github.com/guigui42/paperlens/releases/tag/v0.1.1).
+[Its Actions run](https://github.com/guigui42/paperlens/actions/runs/42878844758)
+passed both native image smoke tests. Anonymous GHCR pull/run and the signed
+build attestation were verified after publication. The preliminary `v0.1.0` tag
+failed validation before any image or GitHub release was published; it was not
+moved or reused.
+
 [Release](../.github/workflows/release.yml) is deterministic GitHub Actions, not a
 Copilot Automation. It uses only the repository-scoped `GITHUB_TOKEN`:
 
@@ -105,11 +113,12 @@ There are no Paperless/Copilot credentials in CI or image layers. The workflow
 has package-write permission only in publication jobs and content-write
 permission only in the final GitHub-release job. Actions are pinned by commit.
 
-For the first release, tag the validated implementation commit:
+For a new release, tag the intended validated source commit with the next
+unused stable version (for example, `v0.1.2` after `v0.1.1`):
 
 ```sh
-git tag -a v0.1.0 -m "Paperlens v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.2 -m "Paperlens v0.1.2"
+git push origin v0.1.2
 ```
 
 For later releases, use a new version tag on the intended validated source
