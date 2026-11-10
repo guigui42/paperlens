@@ -36,9 +36,11 @@ coverage is not a claim that the credential-dependent inference path was tested.
 
 ## Linux and container validation
 
-[GitHub Actions validation](https://github.com/guigui42/paperlens/actions/runs/42838945838)
-passed the Go/race/vet/lint/evaluation/browser job and the Linux amd64 container
-job. The latter builds the image, checks UID 10001, uses a read-only root,
+[Current CI runs](https://github.com/guigui42/paperlens/actions/workflows/ci.yml)
+track the Go/race/vet/lint/evaluation/browser job and the Linux amd64 container
+job. Select the run whose head commit matches the revision under review rather
+than treating a historical run as evidence for newer code. The container job
+builds the image, checks UID 10001, uses a read-only root,
 checks the pinned CLI, runs the restricted SDK smoke command, checks health and
 readiness, and verifies that the per-search runtime directory is empty afterward.
 
@@ -97,6 +99,24 @@ actual in-app frontend now passes search/poll and cancellation. An empty-file
 upload form reaches backend validation and is rejected before any Paperless
 upload. Regression tests retain strict Origin, Host and CSRF checks; normal
 Playwright runs also assert the browser policy header.
+
+## Review regression coverage
+
+Additional synthetic tests cover missing/renamed/partially resolved exclusion
+policies, normalized names, unknown tag metadata, and rechecking the policy after
+metadata changes. They assert that the agent is never called when the policy
+cannot be resolved.
+
+Teardown tests distinguish recoverable session RPC failures from unconfirmed
+runtime shutdown or state removal. They check redacted stage diagnostics, the
+distinct disabled-AI notice, a bounded unresponsive disconnect, and cancellation
+cleanup against the actual pinned CLI without credentials or inference.
+
+Metadata tests cover a cancelled waiter during network refresh, coalesced
+concurrent refreshes, and refusal to reuse expired metadata after failure.
+HTTP/job tests cover stable labels without poll-time metadata calls, huge/invalid
+page numbers, completed-history eviction, capacity retained during cancellation
+cleanup, shutdown admission rejection, and full-page non-HTMX upload navigation.
 
 ## Unverified boundaries
 

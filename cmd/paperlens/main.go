@@ -69,8 +69,15 @@ func run() error {
 		}
 		api = client
 	}
-	engine := &search.Engine{API: api, Limits: search.Limits{Searches: c.MaxSearches, Candidates: c.MaxCandidates, Excerpts: c.MaxExcerpts, Characters: c.ExcerptChars}}
+	engine := &search.Engine{API: api, ExcludedTags: c.ExcludedTags, Limits: search.Limits{Searches: c.MaxSearches, Candidates: c.MaxCandidates, Excerpts: c.MaxExcerpts, Characters: c.ExcerptChars}}
 	if c.AI {
+		vocab, err := api.Metadata(ctx)
+		if err != nil {
+			return err
+		}
+		if engine.ValidatePolicy(vocab) != nil {
+			slog.Warn("AI unavailable at startup", "reason", "exclusion_policy_unresolved")
+		}
 		agent := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Model: c.Model, Root: c.RuntimeDir}
 		if err := agent.Prepare(); err != nil {
 			return err
@@ -98,10 +105,13 @@ func run() error {
 		return nil
 	case <-ctx.Done():
 	}
-	app.Close()
+	app.BeginShutdown()
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdown)
+	if err := srv.Shutdown(shutdown); err != nil {
+		return errors.Join(err, srv.Close())
+	}
+	return nil
 }
 func health() error {
 	origin := os.Getenv("PAPERLENS_ORIGIN")

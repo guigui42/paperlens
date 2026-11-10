@@ -76,7 +76,11 @@ func (s *Server) protect(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if r.Host != origin.Host {
-			http.Error(w, "Host not allowed", http.StatusForbidden)
+			http.Error(w, "Host not allowed. Use the canonical address configured in PAPERLENS_ORIGIN.", http.StatusForbidden)
+			return
+		}
+		if !s.jobs.accepting() {
+			http.Error(w, "Server is shutting down; no new work is accepted.", http.StatusServiceUnavailable)
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {

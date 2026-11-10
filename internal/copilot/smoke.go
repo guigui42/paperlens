@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	sdk "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 	"github.com/guigui42/paperlens/internal/paperless"
 	"github.com/guigui42/paperlens/internal/search"
@@ -40,24 +42,27 @@ func Smoke(ctx context.Context, path string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, os.RemoveAll(root)) }()
 	a := Agent{Path: path, Root: root}
 	client := a.client(root)
-	defer func() { err = errors.Join(err, client.Stop()) }()
+	var session *sdk.Session
+	defer func() {
+		var target cleanupSession
+		var id string
+		if session != nil {
+			target, id = session, session.SessionID
+		}
+		err = errors.Join(err, a.cleanupRuntime(ctx.Err() != nil, root, id, target, client, 30*time.Second))
+	}()
 	if err = client.Start(ctx); err != nil {
 		return fmt.Errorf("cannot start credential-free CLI smoke runtime: %w", err)
 	}
 	if _, err = client.Ping(ctx, "synthetic runtime check"); err != nil {
 		return errors.New("runtime protocol handshake failed")
 	}
-	session, err := client.CreateSession(ctx, sessionConfig(ctx, root, "gpt-5.4", smokeTools{}))
+	session, err = client.CreateSession(ctx, sessionConfig(ctx, root, "gpt-5.4", smokeTools{}))
 	if err != nil {
 		return errors.New("restricted session creation failed")
 	}
-	defer func() {
-		err = errors.Join(err, session.Disconnect())
-		err = errors.Join(err, client.DeleteSession(ctx, session.SessionID))
-	}()
 	if err = verifyToolSurface(ctx, session); err != nil {
 		return err
 	}

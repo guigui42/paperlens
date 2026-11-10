@@ -157,10 +157,20 @@ The original query is searched in Paperless first. Copilot can then call only
 `lookup_metadata`, `search_documents`, and `read_document_excerpt`. Go enforces
 all hard filters, budgets and exclusions, regardless of model output.
 
-Documents tagged **`Export financier`** never enter model tool results, prompts
+By default, documents tagged **`Export financier`** never enter model tool results, prompts
 or transcripts. They remain visible as explicitly labelled, non-AI keyword
 results. Keep that tag on the documents you want excluded. The policy uses
 metadata observed for the retrieval snapshot, not an archive-wide content scan.
+
+`PAPERLENS_EXCLUDED_TAGS` can specify a comma-separated replacement list of
+required privacy-tag names; it defaults to `Export financier`. Keep the
+financial-export tag in that list unless you explicitly rename the policy.
+Names match case/accent-insensitively with surrounding/repeated whitespace
+normalized. Every required name must resolve. Missing or renamed tags produce
+an explicit keyword fallback without calling the model, with a warning on the
+landing page and at startup. The policy is rechecked for each search against
+the current metadata snapshot. Documents containing unknown tag IDs are also
+kept out of AI until metadata is refreshed.
 
 Searches are not exhaustive. Missing OCR, an absent lexical overlap, truncated
 Paperless pages, and the configured budgets can all hide a relevant document.
@@ -177,11 +187,18 @@ does not guarantee that the model's relevance judgement is correct.
 | Search deadline | 90 seconds / 3 minutes |
 | Concurrent searches | 2 / 8 |
 | Additional queued searches | 4 / 16 |
-| In-memory search snapshots | 64, expire after 10 minutes |
+| In-memory search snapshots | 64, kept up to 10 minutes; oldest completed snapshots evicted when full |
 | Upload file size | 20 MiB / 100 MiB |
 | Concurrent uploads | 2 |
 | Upload receipts | 200, expire after 24 hours |
-| Metadata cache | 5 minutes, at most 2,000 items per vocabulary |
+| Metadata cache | 5 minutes, at most 2,000 items per vocabulary; one bounded refresh at a time |
+
+Metadata refreshes do not hold the cache mutex during network requests, and
+waiting callers can cancel independently. Failed refreshes never silently
+return expired privacy metadata. Result polling uses the vocabulary captured
+with its search snapshot, so it performs no metadata requests and labels remain
+stable. Completed history cannot block new searches while execution capacity is
+available. Invalid or oversized page numbers explicitly show the first page.
 
 Recent/newest intent protects strong title/filename relevance from newer
 incidental OCR matches. A year mentioned in a query is not automatically
@@ -191,8 +208,14 @@ Each AI search gets a private runtime directory and conversation. Empty-mode
 defaults, an explicit allowlist, runtime tool-list verification, pre-tool hooks
 and denied permission requests prohibit shell/filesystem/web/MCP/delegation.
 Sessions are disconnected **and deleted**, the process is stopped, and its
-directory is removed. Cancellation also requests abort. A cleanup error disables
-further AI work until restart. A dedicated runtime root is cleaned of app-named
+directory is removed. Cancellation also requests abort. Recoverable session RPC
+teardown errors are logged by stage without raw error payloads and affect only
+that search when runtime stop and state removal both succeed. Unconfirmed
+runtime shutdown, a forced cleanup timeout, or failed local-state removal still
+disables AI until restart, with a distinct user-facing notice. The pinned SDK
+does not provide typed process-exit confirmation for an errored `Stop`, so such
+errors remain fail-closed rather than being guessed harmless. A dedicated
+runtime root is cleaned of app-named
 orphan searches at startup.
 
 Only the signing key and bounded receipts persist in app storage. Queries,
@@ -222,6 +245,8 @@ and upload forms expire with their receipt window. No non-idempotent request is
 automatically retried. Temporary multipart files are removed after the request.
 Receipts store browser scope, task/status/ID/timestamps, not filenames or OCR.
 Deleting browser cookies loses the receipt association, not the document.
+Without HTMX, valid submissions redirect to a full receipt page and validation
+errors retain a complete upload page with a fresh form nonce.
 
 ## Docker / Compose
 

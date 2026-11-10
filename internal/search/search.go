@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -69,28 +70,31 @@ type Output struct {
 	Mode, Notice      string
 	Candidates, Calls int
 	Limited           bool
+	Vocabulary        paperless.Vocabulary
 }
 
 // Engine orchestrates the original query and optional model retrieval.
 type Engine struct {
-	API    paperless.API
-	Agent  Agent
-	Limits Limits
+	API          paperless.API
+	Agent        Agent
+	Limits       Limits
+	ExcludedTags []string
 }
 
 type job struct {
-	mu       sync.Mutex
-	api      paperless.API
-	filters  paperless.Filters
-	vocab    paperless.Vocabulary
-	excluded map[int]bool
-	limits   Limits
-	docs     map[int]paperless.Document
-	ranks    map[int]float64
-	evidence map[int]string
-	calls    int
-	limited  bool
-	stage    func(string)
+	mu        sync.Mutex
+	api       paperless.API
+	filters   paperless.Filters
+	vocab     paperless.Vocabulary
+	excluded  map[int]bool
+	knownTags map[int]bool
+	limits    Limits
+	docs      map[int]paperless.Document
+	ranks     map[int]float64
+	evidence  map[int]string
+	calls     int
+	limited   bool
+	stage     func(string)
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
@@ -105,11 +109,10 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 	if err = f.Validate(v); err != nil {
 		return Output{}, err
 	}
-	j := &job{api: e.API, filters: f, vocab: v, excluded: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage}
+	excluded, policyErr := e.exclusionIDs(v)
+	j := &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage}
 	for _, t := range v.Tags {
-		if Fold(t.Name) == Fold("Export financier") {
-			j.excluded[t.ID] = true
-		}
+		j.knownTags[t.ID] = true
 	}
 	if stage != nil {
 		stage("Searching Paperless")
@@ -117,10 +120,15 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 	if _, err = j.Search(ctx, query); err != nil {
 		return Output{}, err
 	}
-	out := Output{Mode: "Keyword search"}
+	out := Output{Mode: "Keyword search", Vocabulary: v}
 	if keyword || e.Agent == nil {
 		out.Results = j.fallback(query)
 		out.Notice = "Ordinary Paperless keyword results. No document text was sent to AI."
+	} else if policyErr != nil {
+		slog.Warn("AI search blocked", "reason", "exclusion_policy_unresolved")
+		out.Results = j.fallback(query)
+		out.Mode = "Keyword fallback"
+		out.Notice = ErrExclusionPolicy.Error() + ". No document text was sent to AI."
 	} else {
 		if stage != nil {
 			stage("Finding and checking evidence")
@@ -136,6 +144,12 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			out.Results = j.fallback(query)
 			out.Mode = "Keyword fallback"
 			out.Notice = "AI search could not produce verified results. Showing ordinary keyword matches instead."
+			switch {
+			case errors.Is(agentErr, ErrAIDisabled):
+				out.Notice = ErrAIDisabled.Error() + ". Showing keyword results."
+			case errors.Is(agentErr, ErrAITeardown):
+				out.Notice = ErrAITeardown.Error() + ". A new search can use AI."
+			}
 		} else {
 			out.Mode = "Evidence-ranked search"
 			if Latest(query) {
@@ -165,7 +179,7 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 }
 func (j *job) isExcluded(d paperless.Document) bool {
 	for _, t := range d.Tags {
-		if j.excluded[t] {
+		if j.excluded[t] || (j.knownTags != nil && !j.knownTags[t]) {
 			return true
 		}
 	}
@@ -282,7 +296,7 @@ func (j *job) fallback(query string) []Result {
 		excluded := j.isExcluded(d)
 		reason := "Paperless keyword match; not AI-ranked."
 		if excluded {
-			reason = "Excluded from AI by Export financier. Keyword match only."
+			reason = "Excluded from AI by the required tag policy or unavailable tag metadata. Keyword match only."
 		}
 		out = append(out, Result{Document: d, Quote: clip(d.Content, 300), Reason: reason, Excluded: excluded})
 	}

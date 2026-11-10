@@ -117,7 +117,7 @@ Use {"results":[]} when no supplied evidence answers the query. No prose, markdo
 // Rank starts a private runtime, verifies model availability, and deletes local state.
 func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking search.Ranking, err error) {
 	if a.unhealthy.Load() {
-		return ranking, errors.New("copilot disabled after a cleanup failure; restart after inspecting runtime storage")
+		return ranking, search.ErrAIDisabled
 	}
 	dir, err := os.MkdirTemp(a.Root, "search-")
 	if err != nil {
@@ -126,24 +126,13 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 	client := a.client(dir)
 	var session *sdk.Session
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		var cleanErr error
+		var target cleanupSession
+		var id string
 		if session != nil {
-			if ctx.Err() != nil {
-				cleanErr = errors.Join(cleanErr, session.Abort(cleanup))
-			}
-			cleanErr = errors.Join(cleanErr, session.Disconnect())
-			cleanErr = errors.Join(cleanErr, client.DeleteSession(cleanup, session.SessionID))
+			target, id = session, session.SessionID
 		}
-		cleanErr = errors.Join(cleanErr, client.Stop())
-		cleanErr = errors.Join(cleanErr, os.RemoveAll(dir))
-		if _, e := os.Lstat(dir); !errors.Is(e, os.ErrNotExist) {
-			cleanErr = errors.Join(cleanErr, errors.New("runtime directory remains"))
-		}
-		if cleanErr != nil {
-			a.unhealthy.Store(true)
-			err = errors.New("copilot cleanup failed; AI disabled until restart")
+		if cleanErr := a.cleanupRuntime(ctx.Err() != nil, dir, id, target, client, 30*time.Second); cleanErr != nil {
+			err = cleanErr
 		}
 	}()
 	if err = client.Start(ctx); err != nil {

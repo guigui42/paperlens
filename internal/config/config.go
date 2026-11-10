@@ -22,6 +22,7 @@ type Config struct {
 	Concurrency, Queue                                         int
 	Deadline                                                   time.Duration
 	UploadTypes                                                []string
+	ExcludedTags                                               []string
 }
 
 // Load reads environment variables and optional secret files.
@@ -84,6 +85,18 @@ func Load() (Config, error) {
 	c.RuntimeDir, err = filepath.Abs(c.RuntimeDir)
 	if err != nil {
 		return c, err
+	}
+	if raw, set := os.LookupEnv("PAPERLENS_EXCLUDED_TAGS"); set {
+		for _, name := range strings.Split(raw, ",") {
+			name = strings.TrimSpace(name)
+			if name == "" || len([]rune(name)) > 200 {
+				return c, errors.New("PAPERLENS_EXCLUDED_TAGS requires nonempty tag names of at most 200 characters")
+			}
+			c.ExcludedTags = append(c.ExcludedTags, name)
+		}
+		if len(c.ExcludedTags) > 16 {
+			return c, errors.New("PAPERLENS_EXCLUDED_TAGS supports at most 16 required tags")
+		}
 	}
 	if c.Demo {
 		c.AI = false

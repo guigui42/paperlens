@@ -30,7 +30,7 @@
 </div></details><label class="mode"><input type="checkbox" name="mode" value="keyword" {{if not .AI}}checked{{end}}>Keyword only</label></div>
 </form>
 <div class="examples"><span>TRY SOMETHING LIKE</span><button type="button" data-query="Latest home insurance certificate">Home insurance</button><button type="button" data-query="Facture électricité septembre 2025">Electricity bill</button><button type="button" data-query="Warranty for the washing machine">Appliance warranty</button></div>
-<p id="search-privacy" class="privacy">Only submitted searches start a job. AI mode sends selected document excerpts to your configured Copilot model. Financial exports stay out of AI.</p>
+<p id="search-privacy" class="privacy">Only submitted searches start a job. AI mode sends selected document excerpts to your configured Copilot model. Required exclusion tags keep protected documents out of AI.</p>
 {{template "results" .}}
 </main>{{template "foot" .}}{{end}}
 
@@ -49,7 +49,7 @@
 <div class="result-content"><div class="result-meta"><span>{{date .Document.Created}}</span>{{with term .Document.Correspondent $.Vocab.Correspondents}}<span>{{.}}</span>{{end}}{{with term .Document.DocumentType $.Vocab.Types}}<span>{{.}}</span>{{end}}{{if .Excluded}}<span class="badge">Not sent to AI</span>{{else if .Weak}}<span class="badge">Possible match</span>{{end}}</div>
 <h3><a href="/documents/{{.Document.ID}}">{{.Document.Title}}</a></h3><blockquote>{{.Quote}}</blockquote><p class="reason">{{.Reason}}</p>
 <div class="result-actions"><a href="/documents/{{.Document.ID}}">Preview</a><a href="/documents/{{.Document.ID}}/download">Download original</a><a href="{{docURL .Document.ID}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></div></div></article>{{end}}
-{{if or .HasNext .HasPrevious}}<nav class="pagination" aria-label="Results pages">{{if .HasPrevious}}<a href="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-get="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-target="#results" hx-swap="outerHTML">Previous</a>{{end}}{{if .HasNext}}<a href="/jobs/{{.Job.ID}}?page={{.Next}}" hx-get="/jobs/{{.Job.ID}}?page={{.Next}}" hx-target="#results" hx-swap="outerHTML">Next</a>{{end}}<span>Stable search snapshot · expires after 10 minutes</span></nav>{{end}}
+{{if or .HasNext .HasPrevious}}<nav class="pagination" aria-label="Results pages">{{if .HasPrevious}}<a href="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-get="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-target="#results" hx-swap="outerHTML">Previous</a>{{end}}{{if .HasNext}}<a href="/jobs/{{.Job.ID}}?page={{.Next}}" hx-get="/jobs/{{.Job.ID}}?page={{.Next}}" hx-target="#results" hx-swap="outerHTML">Next</a>{{end}}<span>Stable snapshot · kept up to 10 minutes; oldest completed searches may expire sooner when full</span></nav>{{end}}
 {{end}}</section>{{end}}
 
 {{define "upload"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/">← Back to search</a><p class="eyebrow">ADD TO YOUR ARCHIVE</p><h1>One less loose paper.</h1><p class="lede">Upload a document. Paperless takes care of OCR and classification.</p>
@@ -58,7 +58,7 @@
 <label class="dropzone" @dragover.prevent="dragOver" @dragleave.prevent="dragLeave" @drop.prevent="dropFile" :class="dropClass"><strong>Drop a document here</strong><span>or choose a file from your device</span><input id="document-file" type="file" name="document" required aria-label="Choose document"></label><span x-text="uploadError" aria-live="polite"></span>
 <label>Title <span class="muted">(optional)</span><input type="text" name="title" maxlength="200" placeholder="A name you'll recognize"></label><button class="primary" type="submit">Upload to Paperless</button><p class="upload-sending" role="status">Uploading to Paperless. Keep this page open until a receipt appears.</p><p class="privacy">Uploads are not sent to Copilot. Do not retry an uncertain upload until you check Paperless.</p></form>
 {{else}}<div class="notice">Uploads are disabled. The administrator must confirm supported formats with PAPERLENS_UPLOAD_TYPES.</div>{{end}}
-<div id="upload-result" aria-live="polite"></div>
+{{template "upload-result" .}}
 {{if .Receipts}}<h2>Recent uploads in this browser</h2><ul class="receipt-list">{{range .Receipts}}<li><a href="/uploads/{{.ID}}">{{.State}}</a><time>{{.Created.Format "02 Jan 15:04"}}</time></li>{{end}}</ul>{{end}}
 </main>{{template "foot" .}}{{end}}
 {{define "receipt"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/upload">← Uploads</a><h1>Upload status</h1>{{template "upload-result" .}}</main>{{template "foot" .}}{{end}}

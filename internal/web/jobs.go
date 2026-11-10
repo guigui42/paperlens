@@ -18,6 +18,7 @@ type job struct {
 	ctx                            context.Context
 	cancel                         context.CancelFunc
 	keyword                        bool
+	finished                       bool
 }
 type jobs struct {
 	mu       sync.Mutex
@@ -29,6 +30,8 @@ type jobs struct {
 	wg       sync.WaitGroup
 	timeout  time.Duration
 	capacity int
+	inFlight int
+	closed   bool
 }
 
 func newJobs(engine *search.Engine, workers, queued int, timeout time.Duration) *jobs {
@@ -64,30 +67,40 @@ func (j *jobs) prune() {
 		}
 	}
 }
-func (j *jobs) start(owner, query string, f paperless.Filters, keyword bool) (job, error) {
+func (j *jobs) start(owner, query string, f paperless.Filters, keyword bool, vocab paperless.Vocabulary) (job, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.prune()
-	active := 0
-	for _, item := range j.items {
-		if item.ctx.Err() == nil && item.State != "done" && item.State != "error" {
-			active++
-		}
+	if j.closed || j.ctx.Err() != nil {
+		return job{}, errors.New("server is shutting down; search was not accepted")
 	}
-	if active >= j.capacity || len(j.items) >= 64 {
+	if j.inFlight >= j.capacity {
 		return job{}, errors.New("search is busy; wait for an active search to finish")
 	}
+	if len(j.items) >= 64 {
+		var oldest *job
+		for _, item := range j.items {
+			if item.finished && (oldest == nil || item.Created.Before(oldest.Created) || (item.Created.Equal(oldest.Created) && item.ID < oldest.ID)) {
+				oldest = item
+			}
+		}
+		if oldest == nil {
+			return job{}, errors.New("search history is occupied by unfinished work; try again later")
+		}
+		delete(j.items, oldest.ID)
+	}
 	for _, item := range j.items {
-		if item.Owner == owner && item.State != "done" && item.State != "error" {
+		if item.Owner == owner && !item.finished {
 			item.cancel()
 			item.State = "cancelled"
 		}
 	}
 	ctx, cancel := context.WithTimeout(j.ctx, j.timeout)
-	item := &job{ID: randomID(), Owner: owner, Query: query, Filters: f, State: "Queued", Created: time.Now(), ctx: ctx, cancel: cancel, keyword: keyword}
+	item := &job{ID: randomID(), Owner: owner, Query: query, Filters: f, Output: search.Output{Vocabulary: vocab}, State: "Queued", Created: time.Now(), ctx: ctx, cancel: cancel, keyword: keyword}
 	select {
 	case j.queue <- item:
 		j.items[item.ID] = item
+		j.inFlight++
 		return *item, nil
 	default:
 		cancel()
@@ -123,6 +136,8 @@ func (j *jobs) worker() {
 				item.Output = out
 			}
 			item.cancel()
+			item.finished = true
+			j.inFlight--
 			j.mu.Unlock()
 		}
 	}
@@ -144,13 +159,35 @@ func (j *jobs) stop(id, owner string) (job, bool) {
 	if !ok || item.Owner != owner {
 		return job{}, false
 	}
-	if item.State != "done" && item.State != "error" {
+	if !item.finished {
 		item.cancel()
 		item.State = "cancelled"
 	}
 	return *item, true
 }
-func (j *jobs) close() { j.cancel(); j.wg.Wait() }
+func (j *jobs) beginShutdown() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.closed = true
+	j.cancel()
+	for _, item := range j.items {
+		if !item.finished {
+			item.cancel()
+			item.State = "cancelled"
+		}
+	}
+}
+func (j *jobs) accepting() bool { j.mu.Lock(); defer j.mu.Unlock(); return !j.closed }
+func (j *jobs) close() {
+	j.beginShutdown()
+	j.wg.Wait()
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, item := range j.items {
+		item.finished = true
+	}
+	j.inFlight = 0
+}
 func (j job) running() bool {
 	return j.State != "done" && j.State != "error" && j.State != "cancelled" && j.State != "expired"
 }

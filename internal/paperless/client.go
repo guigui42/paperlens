@@ -61,7 +61,8 @@ type Term struct {
 	} `json:"extra_data,omitempty"`
 }
 
-// Vocabulary is cached briefly, never copied from documents.
+// Vocabulary is a read-only metadata snapshot, never copied from documents.
+// Callers must not mutate its slices or nested options.
 type Vocabulary struct{ Tags, Correspondents, Types, Fields []Term }
 
 // Filters are explicit immutable UI constraints.
@@ -102,12 +103,19 @@ type API interface {
 
 // Client binds all requests to one configured origin and rejects redirects.
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
-	mu    sync.Mutex
+	base    string
+	token   string
+	http    *http.Client
+	mu      sync.Mutex
+	vocab   Vocabulary
+	until   time.Time
+	refresh *metadataRefresh
+}
+
+type metadataRefresh struct {
+	done  chan struct{}
 	vocab Vocabulary
-	until time.Time
+	err   error
 }
 
 // New creates a fixed-origin client.
@@ -217,11 +225,43 @@ func decodeResponse(res *http.Response, out any, limit int64) error {
 
 // Metadata caches bounded vocabularies for five minutes.
 func (c *Client) Metadata(ctx context.Context) (Vocabulary, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Now().Before(c.until) {
-		return c.vocab, nil
+	if err := ctx.Err(); err != nil {
+		return Vocabulary{}, err
 	}
+	c.mu.Lock()
+	if time.Now().Before(c.until) {
+		v := c.vocab
+		c.mu.Unlock()
+		return v, nil
+	}
+	if pending := c.refresh; pending != nil {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return Vocabulary{}, ctx.Err()
+		case <-pending.done:
+			return pending.vocab, pending.err
+		}
+	}
+	pending := &metadataRefresh{done: make(chan struct{})}
+	c.refresh = pending
+	c.mu.Unlock()
+	refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	v, err := c.fetchMetadata(refreshCtx)
+	cancel()
+	c.mu.Lock()
+	if err == nil {
+		c.vocab = v
+		c.until = time.Now().Add(5 * time.Minute)
+	}
+	pending.vocab, pending.err = v, err
+	c.refresh = nil
+	close(pending.done)
+	c.mu.Unlock()
+	return v, err
+}
+
+func (c *Client) fetchMetadata(ctx context.Context) (Vocabulary, error) {
 	var v Vocabulary
 	for _, list := range []struct {
 		path string
@@ -250,8 +290,6 @@ func (c *Client) Metadata(ctx context.Context) (Vocabulary, error) {
 			}
 		}
 	}
-	c.vocab = v
-	c.until = time.Now().Add(5 * time.Minute)
 	return v, nil
 }
 

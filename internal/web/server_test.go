@@ -292,15 +292,15 @@ func TestJobQueueCancelExpiryAndCleanup(t *testing.T) {
 	e := &search.Engine{API: api, Agent: a, Limits: search.Limits{Searches: 6, Candidates: 100, Excerpts: 12, Characters: 8000}}
 	j := newJobs(e, 1, 1, time.Second)
 	defer j.close()
-	first, err := j.start("a", "insurance", paperless.Filters{}, false)
+	first, err := j.start("a", "insurance", paperless.Filters{}, false, paperless.Vocabulary{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-a.entered
-	if _, err = j.start("b", "insurance", paperless.Filters{}, false); err != nil {
+	if _, err = j.start("b", "insurance", paperless.Filters{}, false, paperless.Vocabulary{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = j.start("c", "insurance", paperless.Filters{}, false); err == nil {
+	if _, err = j.start("c", "insurance", paperless.Filters{}, false, paperless.Vocabulary{}); err == nil {
 		t.Fatal("unbounded queue")
 	}
 	if _, ok := j.stop(first.ID, "someone"); ok {

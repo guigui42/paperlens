@@ -10,6 +10,7 @@ services:
       PAPERLESS_TOKEN_FILE: /run/secrets/paperless_token
       COPILOT_GITHUB_TOKEN_FILE: /run/secrets/copilot_token
       COPILOT_MODEL: ${COPILOT_MODEL:-gpt-5.4}
+      PAPERLENS_EXCLUDED_TAGS: ${PAPERLENS_EXCLUDED_TAGS:-Export financier}
       PAPERLENS_AI: ${PAPERLENS_AI:-true}
       PAPERLENS_UPLOAD_TYPES: ${PAPERLENS_UPLOAD_TYPES:-}
     secrets:

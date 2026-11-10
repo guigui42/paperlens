@@ -96,6 +96,9 @@ func New(c config.Config, api paperless.API, engine *search.Engine) (*Server, er
 // Close cancels all in-flight searches and waits for cleanup.
 func (s *Server) Close() { s.jobs.close() }
 
+// BeginShutdown rejects new work and cancels searches without blocking HTTP shutdown.
+func (s *Server) BeginShutdown() { s.jobs.beginShutdown() }
+
 // Handler applies security to every route, including static files.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -141,6 +144,10 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		p.Error = err.Error()
 	} else {
 		p.Vocab = v
+		if p.AI && s.jobs.engine.ValidatePolicy(v) != nil {
+			p.AI = false
+			p.Error = search.ErrExclusionPolicy.Error()
+		}
 	}
 	s.render(w, "home", p)
 }
@@ -194,7 +201,7 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 		err = errors.New("enter a query of 1 to 500 characters")
 	}
 	if err == nil {
-		p.Job, err = s.jobs.start(owner, p.Query, f, r.FormValue("mode") == "keyword")
+		p.Job, err = s.jobs.start(owner, p.Query, f, r.FormValue("mode") == "keyword", p.Vocab)
 	}
 	if err != nil {
 		p.Error = err.Error()
@@ -215,7 +222,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	p, owner := s.base(w, r)
 	item, ok := s.jobs.get(r.PathValue("id"), owner)
 	if !ok {
-		p.Error = "Search expired or belongs to another browser. Start a new search."
+		p.Error = "Search expired, was evicted to make room, or belongs to another browser. Start a new search."
 		s.renderSearch(w, r, p)
 		return
 	}
@@ -223,20 +230,18 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	p.Query = item.Query
 	p.Filters = item.Filters
 	p.Running = item.running()
-	v, err := s.api.Metadata(r.Context())
-	if err == nil {
-		p.Vocab = v
-	}
-	n, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if n < 0 {
+	p.Vocab = item.Output.Vocabulary
+	rawPage := r.URL.Query().Get("page")
+	n, err := strconv.Atoi(rawPage)
+	lastPage := max(0, (len(item.Output.Results)-1)/10)
+	if err != nil || n < 0 || n > lastPage {
+		if rawPage != "" {
+			p.Error = "That results page is unavailable. Showing the first page."
+		}
 		n = 0
 	}
 	start := n * 10
-	if start > len(item.Output.Results) {
-		start = 0
-		n = 0
-	}
-	end := min(start+10, len(item.Output.Results))
+	end := start + min(10, len(item.Output.Results)-start)
 	p.Results = item.Output.Results[start:end]
 	p.HasNext = end < len(item.Output.Results)
 	p.HasPrevious = start > 0
@@ -336,15 +341,32 @@ func (s *Server) binary(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) uploadPage(w http.ResponseWriter, r *http.Request) {
 	p, owner := s.base(w, r)
+	s.prepareUploadPage(&p, owner)
+	s.render(w, "upload", p)
+}
+func (s *Server) prepareUploadPage(p *page, owner string) {
 	id, issued := randomID(), strconv.FormatInt(time.Now().Unix(), 10)
 	p.Nonce = id + "." + issued + "." + s.sign("upload:"+owner+":"+id+":"+issued)
 	p.Receipts = s.receipts.list(owner)
 	sort.Slice(p.Receipts, func(i, j int) bool { return p.Receipts[i].Created.After(p.Receipts[j].Created) })
+}
+func (s *Server) renderUploadResult(w http.ResponseWriter, r *http.Request, p page) {
+	if r.Header.Get("HX-Request") == "true" {
+		s.render(w, "upload-result", p)
+		return
+	}
+	if p.Receipt.ID != "" {
+		http.Redirect(w, r, "/uploads/"+p.Receipt.ID, http.StatusSeeOther)
+		return
+	}
 	s.render(w, "upload", p)
 }
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	p, owner := s.base(w, r)
-	fail := func(message string) { p.Error = message; s.render(w, "upload-result", p) }
+	if r.Header.Get("HX-Request") != "true" {
+		s.prepareUploadPage(&p, owner)
+	}
+	fail := func(message string) { p.Error = message; s.renderUploadResult(w, r, p) }
 	if len(s.config.UploadTypes) == 0 {
 		fail("Uploads are disabled until the administrator confirms supported file formats.")
 		return
@@ -382,7 +404,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if old, ok := s.receipts.get(nonce[0], owner); ok {
 		p.Receipt = old
-		s.render(w, "upload-result", p)
+		s.renderUploadResult(w, r, p)
 		return
 	}
 	file, header, err := r.FormFile("document")
@@ -437,7 +459,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if !fresh {
 		p.Receipt = rec
-		s.render(w, "upload-result", p)
+		s.renderUploadResult(w, r, p)
 		return
 	}
 	task, sendErr := s.api.Upload(r.Context(), name, title, bytes.NewReader(b))
@@ -452,7 +474,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Receipt = rec
-	s.render(w, "upload-result", p)
+	s.renderUploadResult(w, r, p)
 }
 func (s *Server) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	p, owner := s.base(w, r)
