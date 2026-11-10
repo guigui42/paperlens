@@ -88,8 +88,8 @@ def assets(tag, image, digest, revision, amd64, arm64, output):
         "image": image,
         "manifest": digest,
         "platforms": {"linux/amd64": amd64, "linux/arm64": arm64},
-        "copilot_sdk": "1.0.28",
-        "copilot_cli": "1.0.105",
+        "copilot_sdk": "1.0.31",
+        "copilot_cli": "1.0.109",
     }, indent=2) + "\n")
     (output / "RELEASE.md").write_text(f"""# Paperlens {tag}
 
@@ -108,7 +108,7 @@ Version tags: `{image}:{tag}`, `{image}:{tag[1:]}`, `{image}:{tag[1:].rsplit('.'
 The mutable `latest` tag tracks the newest stable release. Pin the digest above
 for reproducible Komodo deployments and rollback.
 
-The image includes Copilot CLI **1.0.105**, paired with Go SDK **1.0.28**.
+The image includes Copilot CLI **1.0.109**, paired with Go SDK **1.0.31**.
 No Copilot CLI install is needed on the Docker host. Supply credentials only at
 runtime through mounted secret files; no household credentials, archive data or
 runtime state are included in this release.

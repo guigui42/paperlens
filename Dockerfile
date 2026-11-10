@@ -14,19 +14,19 @@ LABEL org.opencontainers.image.title="Paperlens" \
     org.opencontainers.image.source="https://github.com/guigui42/paperlens" \
     org.opencontainers.image.version="${VERSION}" \
     org.opencontainers.image.revision="${REVISION}" \
-    io.paperlens.copilot-sdk.version="1.0.28" \
-    io.paperlens.copilot-cli.version="1.0.105"
+    io.paperlens.copilot-sdk.version="1.0.31" \
+    io.paperlens.copilot-cli.version="1.0.109"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
-# Pair verified against the SDK's v1.0.28 copilotCliVersion metadata.
+# Pair verified against the SDK's v1.0.31 copilotCliVersion metadata.
 # Checksums pin the exact runtime bytes; runtime homes must stay isolated.
 RUN set -eu; \
     case "$TARGETARCH" in \
-      amd64) arch=x64; hash=aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2 ;; \
-      arm64) arch=arm64; hash=e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847 ;; \
+      amd64) arch=x64; hash=45a7f37e822e8c8725eda6b27deaed55dad2688ff4163ed27ec22e23293cb761 ;; \
+      arm64) arch=arm64; hash=679db06c3168457d8154cd8ce93b822f7c46d3169e61da4c0b78ac6e110c4af6 ;; \
       *) echo "Unsupported architecture" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-linux-${arch}.tar.gz" -o /tmp/copilot.tar.gz; \
+    curl -fsSL "https://github.com/github/copilot-cli/releases/download/v1.0.109/copilot-linux-${arch}.tar.gz" -o /tmp/copilot.tar.gz; \
     echo "$hash  /tmp/copilot.tar.gz" | sha256sum -c -; \
     mkdir /opt/copilot; tar -xzf /tmp/copilot.tar.gz -C /opt/copilot; \
     rm /tmp/copilot.tar.gz; \

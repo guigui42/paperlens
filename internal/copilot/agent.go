@@ -54,6 +54,7 @@ func (a *Agent) client(dir string) *sdk.Client {
 		Connection: sdk.StdioConnection{Path: a.Path, Env: []string{
 			"HOME=" + dir, "XDG_CONFIG_HOME=" + dir, "XDG_CACHE_HOME=" + dir,
 			"TMPDIR=" + dir, "PATH=/usr/bin:/bin", "COPILOT_GITHUB_TELEMETRY_DISABLED=true",
+			"COPILOT_RUNTIME_PROCESS_FILE_LOGGING=0",
 		}},
 		Mode: sdk.ModeEmpty, BaseDirectory: dir, WorkingDirectory: dir,
 		GitHubToken: a.Token, UseLoggedInUser: sdk.Bool(false), LogLevel: "none",
@@ -79,7 +80,8 @@ func sessionConfig(ctx context.Context, dir, model string, t search.Tools) *sdk.
 	}
 	return &sdk.SessionConfig{
 		ClientName: "paperlens", Model: model, WorkingDirectory: dir, ConfigDirectory: dir,
-		Tools: tools, AvailableTools: []string{"custom:lookup_metadata", "custom:search_documents", "custom:read_document_excerpt"},
+		PermissionMode: rpc.PermissionModeManual,
+		Tools:          tools, AvailableTools: []string{"custom:lookup_metadata", "custom:search_documents", "custom:read_document_excerpt"},
 		EnableConfigDiscovery: sdk.Bool(false), EnableSkills: sdk.Bool(false), EnableFileHooks: sdk.Bool(false),
 		EnableHostGitOperations: sdk.Bool(false), EnableSessionStore: sdk.Bool(false),
 		EnableOnDemandInstructionDiscovery: sdk.Bool(false), SkipCustomInstructions: sdk.Bool(true),
@@ -173,6 +175,9 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 }
 
 func verifyToolSurface(ctx context.Context, session *sdk.Session) error {
+	if mode := session.PermissionModeResult(); mode == nil || mode.Mode != rpc.PermissionModeManual {
+		return errors.New("copilot runtime did not confirm manual permission mode")
+	}
 	if _, err := session.RPC.Tools.InitializeAndValidate(ctx); err != nil {
 		return errors.New("cannot initialize restricted Copilot tools")
 	}

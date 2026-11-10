@@ -2,7 +2,7 @@
 
 Paperlens is distributed as `ghcr.io/guigui42/paperlens` for **Linux amd64 and
 arm64**. The image includes Go's application binary and the checksum-pinned
-**Copilot CLI 1.0.105**, paired with Go SDK **1.0.28**. No Node installation,
+**Copilot CLI 1.0.109**, paired with Go SDK **1.0.31**. No Node installation,
 Copilot CLI installation, frontend build or source checkout is required on the
 Docker host.
 
@@ -86,6 +86,8 @@ until `PAPERLENS_UPLOAD_TYPES` is explicitly set after verifying parser support.
 
 The first published release is
 [v0.1.1](https://github.com/guigui42/paperlens/releases/tag/v0.1.1).
+That immutable release contains CLI 1.0.105 and SDK 1.0.28. New runtime versions
+ship in a new patch release; old release tags and digests are never rewritten.
 [Its Actions run](https://github.com/guigui42/paperlens/actions/runs/42878844758)
 passed both native image smoke tests. Anonymous GHCR pull/run and the signed
 build attestation were verified after publication. The preliminary `v0.1.0` tag
@@ -114,11 +116,11 @@ has package-write permission only in publication jobs and content-write
 permission only in the final GitHub-release job. Actions are pinned by commit.
 
 For a new release, tag the intended validated source commit with the next
-unused stable version (for example, `v0.1.2` after `v0.1.1`):
+unused stable version. For example, after the `v0.1.2` runtime update:
 
 ```sh
-git tag -a v0.1.2 -m "Paperlens v0.1.2"
-git push origin v0.1.2
+git tag -a v0.1.3 -m "Paperlens v0.1.3"
+git push origin v0.1.3
 ```
 
 For later releases, use a new version tag on the intended validated source

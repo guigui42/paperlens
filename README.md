@@ -108,7 +108,7 @@ verify that the identity has access to Copilot and the chosen model, and that
 your intended usage complies with the applicable subscription and organization
 policies. **Successful token authentication is not proof that sharing a
 subscription through an app is permitted.** See the
-[SDK authentication guide](https://github.com/github/copilot-sdk/blob/v1.0.28/docs/auth/authenticate.md).
+[SDK authentication guide](https://github.com/github/copilot-sdk/blob/v1.0.31/docs/auth/authenticate.md).
 
 ```sh
 export PAPERLENS_AI=true
@@ -126,21 +126,26 @@ Copilot home, repository instructions or installed MCP servers.
 
 | Component | Pin |
 |---|---|
-| Go SDK | `github.com/github/copilot-sdk/go v1.0.28` |
-| CLI release artifact | `github/copilot-cli v1.0.105`, SHA-256 verified |
-| CLI version in isolated homes | `1.0.105` on macOS and Linux |
+| Go SDK | `github.com/github/copilot-sdk/go v1.0.31` |
+| CLI release artifact | `github/copilot-cli v1.0.109`, SHA-256 verified |
+| CLI version in isolated homes | `1.0.109` on macOS and Linux |
 | Default model | `gpt-5.4`, configurable and checked against the identity's model list |
 | HTMX | 4.0.1 |
 | Alpine CSP | 3.17.5 |
 
 The CLI release pin comes from the
-[SDK's own `copilotCliVersion`](https://github.com/github/copilot-sdk/blob/v1.0.28/nodejs/package.json).
+[SDK's own `copilotCliVersion`](https://github.com/github/copilot-sdk/blob/v1.0.31/nodejs/package.json).
 Check the version with an isolated home: the release launcher can otherwise use
 an ambient cached runtime. Do not silently substitute an arbitrary installed
 CLI. Download the matching platform artifact and verify
-it against [the release checksums](https://github.com/github/copilot-cli/releases/tag/v1.0.105).
+it against [the release checksums](https://github.com/github/copilot-cli/releases/tag/v1.0.109).
 Docker includes the Linux runtime with fixed checksums. Go's binary alone is not
-sufficient. See [SDK local runtime setup](https://github.com/github/copilot-sdk/blob/v1.0.28/docs/setup/local-cli.md).
+sufficient. See [SDK local runtime setup](https://github.com/github/copilot-sdk/blob/v1.0.31/docs/setup/local-cli.md).
+
+These are the latest stable SDK/CLI releases checked on 2026-11-10, and the SDK
+release explicitly declares this CLI pairing. Prerelease builds are not
+silently substituted. Dependency pins, image labels, smoke checks and release
+metadata are checked together by a deterministic consistency test.
 
 Check the installed pair without credentials or model inference:
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sdk "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 	"github.com/guigui42/paperlens/internal/paperless"
 	"github.com/guigui42/paperlens/internal/search"
 )
@@ -22,7 +23,7 @@ func (emptyTools) Excerpt(context.Context, int) (search.Evidence, error) {
 
 func TestPolicyDefaults(t *testing.T) {
 	c := sessionConfig(context.Background(), t.TempDir(), "gpt-5.4", emptyTools{})
-	if len(c.AvailableTools) != 3 || *c.EnableConfigDiscovery || *c.EnableSkills || *c.EnableFileHooks || *c.EnableSessionStore || *c.InfiniteSessions.Enabled || c.OnUserInputRequest != nil {
+	if len(c.AvailableTools) != 3 || *c.EnableConfigDiscovery || *c.EnableSkills || *c.EnableFileHooks || *c.EnableSessionStore || *c.InfiniteSessions.Enabled || c.OnUserInputRequest != nil || c.PermissionMode != rpc.PermissionModeManual {
 		t.Fatal("unsafe session options")
 	}
 	for _, name := range []string{"shell", "view", "web_fetch", "task", "mcp:github", "memory", "ask_user"} {
@@ -62,7 +63,7 @@ func TestPrepareOnlyDedicatedStorage(t *testing.T) {
 func TestPinnedRuntimeLifecycle(t *testing.T) {
 	path := os.Getenv("PAPERLENS_TEST_CLI")
 	if path == "" {
-		t.Skip("set PAPERLENS_TEST_CLI to the checksum-verified v1.0.105 release executable")
+		t.Skip("set PAPERLENS_TEST_CLI to the checksum-verified v1.0.109 release executable")
 	}
 	root := t.TempDir()
 	a := Agent{Path: path, Root: root}
@@ -85,6 +86,9 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 	}
 	session, err := client.CreateSession(ctx, sessionConfig(ctx, dir, "gpt-5.4", emptyTools{}))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = verifyToolSurface(ctx, session); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = session.RPC.Tools.InitializeAndValidate(ctx); err != nil {

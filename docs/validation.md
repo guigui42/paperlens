@@ -22,12 +22,20 @@ public record. Hosted relevance evaluations use only the synthetic archive.
   emulation. Actual vendored HTMX 4 and Alpine CSP run under the application's
   CSP. Checks include keyboard search, theme, filters, cancellation, errors,
   empty/excluded results, preview/download and upload outcomes.
-- The checksum-verified CLI release v1.0.105 works with Go SDK v1.0.28 for
+- The current checksum-verified CLI release v1.0.109 works with Go SDK v1.0.31 for
   start/ping, restricted-session creation, actual runtime tool-list inspection,
   application-tool invocation, forbidden-tool rejection, disconnect, explicit
   session deletion, process stop and directory cleanup.
   Only the three application tools are offered. No inference credential was
   supplied to this lifecycle check.
+
+The current pair is the latest stable SDK/CLI release checked on 2026-11-10.
+[SDK v1.0.31's runtime dependency](https://github.com/github/copilot-sdk/blob/v1.0.31/nodejs/package.json)
+explicitly names CLI 1.0.109. Session creation now requests manual permission mode
+and refuses inference unless the runtime confirms that mode. Restricted tool
+enumeration, allowed/forbidden tool execution, cancellation, process shutdown and
+local-state cleanup were rechecked with the new pair. Runtime process-file
+logging is explicitly disabled in addition to the existing telemetry controls.
 
 The initial deterministic race-test coverage was 89.3% for the Paperless integration and
 85.9% for search. Web handlers are 76.1%; configuration is 90.9%. CLI-dependent
@@ -68,8 +76,8 @@ server identity to evaluate actual inference on synthetic data.
 
 ## Hosted synthetic relevance result
 
-A subsequent real hosted evaluation used `gpt-6.1-sol` through the isolated
-Copilot SDK/CLI pair. It completed all 30 cases in 454.18 seconds:
+A subsequent real hosted evaluation used `gpt-6.1-sol` through the then-pinned
+SDK 1.0.28/CLI 1.0.105 pair. It completed all 30 cases in 454.18 seconds:
 
 | Measure | Result |
 |---|---|
@@ -125,16 +133,17 @@ cleanup, shutdown admission rejection, and full-page non-HTMX upload navigation.
   Each deployment must verify its own identity, entitlement and model policy.
 - Live ingestion was intentionally not exercised by uploading a real file.
   Upload outcome/restart/duplicate handling is covered by deterministic fixtures.
-- Local Docker execution: the local daemon is unavailable, so container
-  execution was validated on Linux amd64 in GitHub Actions instead. Linux arm64
-  has a pinned artifact in the Dockerfile but was not execution-tested.
+- Release images are smoke-tested on native Linux amd64 and arm64 in Actions.
+  Local Docker ARM64 smoke tests additionally verify the exact bundled runtime.
+  These credential-free checks establish runtime and container behavior, not
+  private-archive relevance or a user's model entitlement.
 - Real household search recall requires a separately authorized evaluation.
   No private archive documents or URLs are included in fixtures or artifacts.
 
 ## Reproducible runtime check
 
-The SDK's pinned metadata names CLI release `v1.0.105`. The verified macOS and
-Linux artifacts report `1.0.105` with isolated homes. An initial version check
+The SDK's pinned metadata names CLI release `v1.0.109`. The verified macOS and
+Linux artifacts report `1.0.109` with isolated homes. An initial historical check
 without isolation resolved an ambient cached runtime instead, which is why the
 application supplies its own home, configuration, work and cache directories.
 Release artifacts are also pinned by SHA-256.

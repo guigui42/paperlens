@@ -35,7 +35,7 @@ fi
 test "$(docker exec "$name" id -u)" = 10001
 cli_version="$(docker exec "$name" /opt/copilot/copilot --version)"
 printf '%s\n' "$cli_version"
-grep -Fq 'GitHub Copilot CLI 1.0.105.' <<< "$cli_version"
+grep -Fq 'GitHub Copilot CLI 1.0.109.' <<< "$cli_version"
 docker exec "$name" paperlens runtime-check
 docker exec "$name" paperlens health
 port="$(docker port "$name" 8080/tcp | cut -d: -f2)"
