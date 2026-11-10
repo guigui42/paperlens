@@ -1,4 +1,4 @@
-// Package paperless implements the bounded Paperless 3.3/API v10 contract.
+// Package paperless implements the bounded Paperless 3.3 and 3.4.2/API v10 contract.
 package paperless
 
 import (
@@ -138,14 +138,15 @@ func (c *Client) Probe(ctx context.Context) error {
 		return fmt.Errorf("paperless schema probe: %w", err)
 	}
 	defer res.Body.Close()
-	if !strings.HasPrefix(res.Header.Get("X-Version"), "3.3.") || res.Header.Get("X-Api-Version") != "10" {
-		return errors.New("paperless version is not supported (requires X-Version 3.3.x and X-Api-Version 10)")
+	version := res.Header.Get("X-Version")
+	if (!strings.HasPrefix(version, "3.3.") && version != "3.4.2") || res.Header.Get("X-Api-Version") != "10" {
+		return errors.New("paperless version is not supported (requires 3.3.x or 3.4.2 with API v10)")
 	}
 	if err := decodeResponse(res, &schema, 12<<20); err != nil {
 		return err
 	}
-	if schema.Info.Version != "6.0.0" {
-		return errors.New("paperless OpenAPI schema revision is not supported (expected 6.0.0)")
+	if schema.Info.Version != "6.0.0" && schema.Info.Version != "6.0.0 (10)" {
+		return errors.New("paperless OpenAPI schema revision is not supported (expected 6.0.0, optionally qualified with API 10)")
 	}
 	params := map[string]bool{}
 	for _, p := range schema.Paths["/api/documents/"].Get.Parameters {

@@ -207,8 +207,22 @@ func TestUploadTasksAndBinary(t *testing.T) {
 	}
 }
 func TestProbeSchema(t *testing.T) {
-	for _, version := range []string{"3.3.0", "3.2.0"} {
-		t.Run(version, func(t *testing.T) {
+	for _, tc := range []struct {
+		version, schema, api     string
+		missingFilter, supported bool
+	}{
+		{"3.3.0", "6.0.0", "10", false, true},
+		{"3.3.0", "6.0.0 (10)", "10", false, true},
+		{"3.4.2", "6.0.0 (10)", "10", false, true},
+		{"3.4.2", "6.0.0", "10", false, true},
+		{"3.4.2", "6.0.0 (9)", "10", false, false},
+		{"3.4.2", "6.0.0 (10)", "9", false, false},
+		{"3.4.2", "6.0.0 (10)", "10", true, false},
+		{"3.4.1", "6.0.0 (10)", "10", false, false},
+		{"3.5.0", "6.0.0 (10)", "10", false, false},
+		{"3.2.0", "6.0.0", "10", false, false},
+	} {
+		t.Run(fmt.Sprintf("%s/%s/%s/missing=%t", tc.version, tc.schema, tc.api, tc.missingFilter), func(t *testing.T) {
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/schema/" {
 					io.WriteString(w, `{"results":[],"next":null}`)
@@ -216,12 +230,16 @@ func TestProbeSchema(t *testing.T) {
 				}
 				params := []map[string]string{}
 				for _, p := range []string{"query", "created__date__gte", "created__date__lte", "correspondent__id", "document_type__id", "tags__id__all", "custom_field_query"} {
+					if tc.missingFilter && p == "custom_field_query" {
+						continue
+					}
 					params = append(params, map[string]string{"name": p})
 				}
-				w.Header().Set("X-Version", version)
-				json.NewEncoder(w).Encode(map[string]any{"info": map[string]string{"version": "6.0.0"}, "paths": map[string]any{"/api/documents/": map[string]any{"get": map[string]any{"parameters": params}}}})
+				w.Header().Set("X-Version", tc.version)
+				w.Header().Set("X-Api-Version", tc.api)
+				json.NewEncoder(w).Encode(map[string]any{"info": map[string]string{"version": tc.schema}, "paths": map[string]any{"/api/documents/": map[string]any{"get": map[string]any{"parameters": params}}}})
 			})
-			if err := c.Probe(context.Background()); (err == nil) != (version == "3.3.0") {
+			if err := c.Probe(context.Background()); (err == nil) != tc.supported {
 				t.Fatal(err)
 			}
 		})

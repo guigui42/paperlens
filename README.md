@@ -75,14 +75,17 @@ export PAPERLENS_UPLOAD_TYPES=pdf,png,jpg,jpeg
 go run ./cmd/paperlens
 ```
 
-The integration deliberately checks **Paperless 3.3.x, API v10** and the actual
+The integration deliberately checks **Paperless 3.3.x or 3.4.2, API v10** and the actual
 OpenAPI filter contract at startup. `X-Version` is the application version;
 `X-Api-Version` is the API version; OpenAPI `info.version` is independently
-`6.0.0` in the pinned source. A different contract fails closed rather than
+`6.0.0` in the pinned source. Versioned schema responses may qualify it as
+`6.0.0 (10)`. Only those two exact revisions are accepted, and every required
+filter is still checked. A different contract fails closed rather than
 silently dropping filters.
 
 References: [Paperless API](https://docs.paperless-ngx.com/api/),
 [3.3 filter definitions](https://github.com/paperless-ngx/paperless-ngx/blob/v3.3.0/src/documents/filters.py),
+[3.4.2 filter definitions](https://github.com/paperless-ngx/paperless-ngx/blob/v3.4.2/src/documents/filters.py),
 [v10 task serializer](https://github.com/paperless-ngx/paperless-ngx/blob/v3.3.0/src/documents/serialisers.py),
 [version headers](https://github.com/paperless-ngx/paperless-ngx/blob/v3.3.0/src/paperless/middleware.py).
 
