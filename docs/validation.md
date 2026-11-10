@@ -94,6 +94,13 @@ directory was empty afterward, including session transcripts and logs.
 The fixture baseline also scores 100%, so this result does not demonstrate
 improvement over a real Paperless index or measure private-archive recall.
 
+The latest stable pair, **SDK 1.0.31 / CLI 1.0.109**, was then evaluated with the
+same `gpt-6.1-sol` model and all 30 synthetic cases. It scored 24/24 answerable
+Hit@3, 6/6 correct no-match decisions and zero fallbacks in 485.18 seconds.
+Manual permission mode was confirmed before inference, and the isolated runtime
+directory was empty afterward. This is a new hosted run, not a relabelled result
+from the previous runtime pair; the same synthetic-baseline limitations apply.
+
 ## In-app WebKit origin regression
 
 The real in-app browser reproduced a rejected HTMX submission at the correct
