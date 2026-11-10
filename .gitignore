@@ -1,0 +1,11 @@
+.env
+.cache/
+.state/
+.secrets/
+.impeccable/
+node_modules/
+test-results/
+playwright-report/
+coverage.out
+/paperlens
+*.log

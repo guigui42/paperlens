@@ -1,0 +1,35 @@
+services:
+  paperlens:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PAPERLENS_ORIGIN: ${PAPERLENS_ORIGIN:-http://localhost:8080}
+      PAPERLENS_LAN_ONLY: "true"
+      PAPERLESS_URL: ${PAPERLESS_URL:?Set the Paperless origin}
+      PAPERLESS_TOKEN_FILE: /run/secrets/paperless_token
+      COPILOT_GITHUB_TOKEN_FILE: /run/secrets/copilot_token
+      COPILOT_MODEL: ${COPILOT_MODEL:-gpt-5.4}
+      PAPERLENS_AI: ${PAPERLENS_AI:-true}
+      PAPERLENS_UPLOAD_TYPES: ${PAPERLENS_UPLOAD_TYPES:-}
+    secrets:
+      - paperless_token
+      - copilot_token
+    volumes:
+      - state:/data
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    stop_grace_period: 45s
+    restart: unless-stopped
+volumes:
+  state:
+secrets:
+  paperless_token:
+    file: .secrets/paperless_token
+  copilot_token:
+    file: .secrets/copilot_token
