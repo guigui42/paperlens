@@ -83,6 +83,12 @@ OpenAPI filter contract at startup. `X-Version` is the application version;
 filter is still checked. A different contract fails closed rather than
 silently dropping filters.
 
+Metadata pagination is rebuilt from the expected next page number and fixed
+page size against the configured origin. If a reverse proxy advertises HTTP
+links for that same host and metadata route, Paperlens still sends HTTPS when
+HTTPS is configured. Other hosts, routes, credentials, query parameters, page
+jumps and redirects remain rejected.
+
 References: [Paperless API](https://docs.paperless-ngx.com/api/),
 [3.3 filter definitions](https://github.com/paperless-ngx/paperless-ngx/blob/v3.3.0/src/documents/filters.py),
 [3.4.2 filter definitions](https://github.com/paperless-ngx/paperless-ngx/blob/v3.4.2/src/documents/filters.py),

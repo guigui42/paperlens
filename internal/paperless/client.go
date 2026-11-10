@@ -242,16 +242,11 @@ func (c *Client) Metadata(ctx context.Context) (Vocabulary, error) {
 			*list.dst = append(*list.dst, data.Results...)
 			path = ""
 			if data.Next != nil {
-				u, err := url.Parse(*data.Next)
+				nextPath, err := c.metadataPage(*data.Next, list.path, page+2)
 				if err != nil {
-					return v, errors.New("invalid metadata pagination")
+					return v, err
 				}
-				base, _ := url.Parse(c.base)
-				u = base.ResolveReference(u)
-				if u.Scheme != base.Scheme || u.Host != base.Host || u.User != nil || u.Path != "/api/"+list.path+"/" {
-					return v, errors.New("unsafe metadata pagination")
-				}
-				path = u.RequestURI()
+				path = nextPath
 			}
 		}
 	}
