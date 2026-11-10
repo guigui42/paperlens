@@ -250,7 +250,15 @@ errors retain a complete upload page with a fresh form nonce.
 
 ## Docker / Compose
 
-See [compose.yaml](compose.yaml) and [.env.example](.env.example). Copy the example
+For released images and later Komodo deployment, use
+[compose.release.yaml](compose.release.yaml) and the digest-pinned environment
+asset from [GitHub Releases](https://github.com/guigui42/paperlens/releases).
+The image includes the pinned Copilot CLI; the Docker host needs no CLI install.
+See [Docker releases and Komodo](docs/docker-release.md) for registry access,
+secret files, updates, rollback and the Actions publication workflow.
+
+For a local source build, see [compose.yaml](compose.yaml) and
+[.env.example](.env.example). Copy the example
 environment, supply `.secrets/paperless_token` and `.secrets/copilot_token`
 locally, and protect those files. Container UID/GID 10001 must be able to read
 mounted secret files. Do not commit them.

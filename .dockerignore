@@ -9,3 +9,5 @@ playwright-report
 *.log
 coverage.out
 /paperlens
+.impeccable
+__pycache__

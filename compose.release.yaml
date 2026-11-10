@@ -1,0 +1,37 @@
+services:
+  paperlens:
+    image: ${PAPERLENS_IMAGE:?Set PAPERLENS_IMAGE from the release image-reference.txt}
+    ports:
+      - "${PAPERLENS_BIND_IP:-127.0.0.1}:${PAPERLENS_PORT:-8080}:8080"
+    environment:
+      PAPERLENS_ORIGIN: ${PAPERLENS_ORIGIN:-http://127.0.0.1:8080}
+      PAPERLENS_LAN_ONLY: "true"
+      PAPERLESS_URL: ${PAPERLESS_URL:?Set the Paperless HTTP(S) origin without /api/}
+      PAPERLESS_TOKEN_FILE: /run/secrets/paperless_token
+      COPILOT_GITHUB_TOKEN_FILE: /run/secrets/copilot_token
+      COPILOT_MODEL: ${COPILOT_MODEL:-gpt-6.1-sol}
+      PAPERLENS_EXCLUDED_TAGS: ${PAPERLENS_EXCLUDED_TAGS:-Export financier}
+      PAPERLENS_AI: ${PAPERLENS_AI:-true}
+      PAPERLENS_UPLOAD_TYPES: ${PAPERLENS_UPLOAD_TYPES:-}
+    secrets:
+      - paperless_token
+      - copilot_token
+    volumes:
+      - paperlens_data:/data
+    tmpfs:
+      - /tmp:noexec,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
+      - /runtime:exec,nosuid,nodev,size=512m,uid=10001,gid=10001,mode=700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    stop_grace_period: 45s
+    restart: unless-stopped
+volumes:
+  paperlens_data:
+secrets:
+  paperless_token:
+    file: ${PAPERLESS_TOKEN_PATH:-./.secrets/paperless_token}
+  copilot_token:
+    file: ${COPILOT_TOKEN_PATH:-./.secrets/copilot_token}

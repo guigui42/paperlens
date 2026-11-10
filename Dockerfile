@@ -7,6 +7,15 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/paperlens ./cmd/pa
 
 FROM debian:trixie-slim AS runtime
 ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.title="Paperlens" \
+    org.opencontainers.image.description="Search-first Paperless frontend with an isolated Copilot SDK runtime" \
+    org.opencontainers.image.source="https://github.com/guigui42/paperlens" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${REVISION}" \
+    io.paperlens.copilot-sdk.version="1.0.28" \
+    io.paperlens.copilot-cli.version="1.0.105"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 # Pair verified against the SDK's v1.0.28 copilotCliVersion metadata.

@@ -1,7 +1,9 @@
 name: CI
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -20,6 +22,8 @@ jobs:
       - run: go vet ./...
       - run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
       - run: go run ./cmd/evaluate
+      - run: python3 -m unittest discover -s scripts/tests
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
