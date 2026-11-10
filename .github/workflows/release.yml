@@ -180,6 +180,6 @@ jobs:
             --title "Paperlens $TAG" --notes-file "$RUNNER_TEMP/release/RELEASE.md"
           {
             printf '## Paperlens %s\n\n' "$TAG"
-            printf 'Image: `%s@%s`\n\n' "$IMAGE" "$(cat "$RUNNER_TEMP/release/image-reference.txt" | cut -d@ -f2)"
+            printf 'Image: %s\n\n' "$(< "$RUNNER_TEMP/release/image-reference.txt")"
             printf 'Native smoke tests passed on linux/amd64 and linux/arm64.\n'
           } >> "$GITHUB_STEP_SUMMARY"
