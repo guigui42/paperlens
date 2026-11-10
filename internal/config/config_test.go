@@ -56,8 +56,9 @@ func TestDemoAndValidation(t *testing.T) {
 	t.Run("valid demo", func(t *testing.T) {
 		defaults(t)
 		t.Setenv("PAPERLENS_DEMO", "true")
+		t.Setenv("PAPERLENS_ORIGIN", "http://localhost:8080/")
 		c, err := Load()
-		if err != nil || c.AI || !filepath.IsAbs(c.StateDir) {
+		if err != nil || c.AI || !filepath.IsAbs(c.StateDir) || c.Origin != "http://localhost:8080" {
 			t.Fatal(c, err)
 		}
 	})

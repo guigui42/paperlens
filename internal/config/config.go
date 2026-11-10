@@ -73,6 +73,7 @@ func Load() (Config, error) {
 	if _, err = origin(c.Origin); err != nil {
 		return c, fmt.Errorf("PAPERLENS_ORIGIN: %w", err)
 	}
+	c.Origin = strings.TrimSuffix(c.Origin, "/")
 	c.StateDir, err = filepath.Abs(c.StateDir)
 	if err != nil {
 		return c, err

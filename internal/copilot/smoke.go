@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/github/copilot-sdk/go/rpc"
 	"github.com/guigui42/paperlens/internal/paperless"
 	"github.com/guigui42/paperlens/internal/search"
 )
@@ -57,5 +58,22 @@ func Smoke(ctx context.Context, path string) (err error) {
 		err = errors.Join(err, session.Disconnect())
 		err = errors.Join(err, client.DeleteSession(ctx, session.SessionID))
 	}()
-	return verifyToolSurface(ctx, session)
+	if err = verifyToolSurface(ctx, session); err != nil {
+		return err
+	}
+	result, err := session.RPC.Tools.Execute(ctx, &rpc.ToolsExecuteRequest{Name: "lookup_metadata", Arguments: map[string]any{}})
+	if err != nil {
+		return fmt.Errorf("application tool invocation failed: %w", err)
+	}
+	expanded, ok := result.(*rpc.ToolResultExpanded)
+	if !ok || expanded.ResultType != "success" {
+		return errors.New("application tool invocation did not succeed")
+	}
+	result, err = session.RPC.Tools.Execute(ctx, &rpc.ToolsExecuteRequest{Name: "bash", Arguments: map[string]any{"command": "printf forbidden-tool"}})
+	if err == nil {
+		if expanded, ok = result.(*rpc.ToolResultExpanded); !ok || expanded.ResultType == "success" {
+			return errors.New("forbidden tool was not rejected")
+		}
+	}
+	return nil
 }

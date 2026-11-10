@@ -23,9 +23,28 @@ household token, or private repository data was used.
   empty/excluded results, preview/download and upload outcomes.
 - The checksum-verified CLI release v1.0.105 works with Go SDK v1.0.28 for
   start/ping, restricted-session creation, actual runtime tool-list inspection,
-  disconnect, explicit session deletion, process stop and directory cleanup.
+  application-tool invocation, forbidden-tool rejection, disconnect, explicit
+  session deletion, process stop and directory cleanup.
   Only the three application tools are offered. No inference credential was
   supplied to this lifecycle check.
+
+The deterministic race-test coverage is 89.3% for the Paperless integration and
+85.9% for search. Web handlers are 76.1%; configuration is 90.9%. CLI-dependent
+checks run separately from the ordinary test suite, so ordinary SDK-adapter
+coverage is not a claim that the credential-dependent inference path was tested.
+
+## Linux and container validation
+
+[GitHub Actions validation](https://github.com/guigui42/paperlens/actions/runs/42838945838)
+passed the Go/race/vet/lint/evaluation/browser job and the Linux amd64 container
+job. The latter builds the image, checks UID 10001, uses a read-only root,
+checks the pinned CLI, runs the restricted SDK smoke command, checks health and
+readiness, and verifies that the per-search runtime directory is empty afterward.
+
+The first container runs exposed two real packaging constraints, both fixed:
+the CLI needs a writable isolated home, and its extracted native addon cannot
+load from a `noexec` tmpfs. The final configuration gives the runtime a dedicated
+`exec` tmpfs while upload temporary storage remains on a separate `noexec` mount.
 
 ## Synthetic relevance result
 
@@ -53,9 +72,9 @@ server identity to evaluate actual inference on synthetic data.
 - Live Paperless deployment behavior: only versioned upstream source and
   deterministic HTTP contracts were used. Connect a dedicated integration
   identity in a controlled environment before relying on production retrieval.
-- Local Docker execution: Docker CLI is installed but the local daemon is
-  unavailable. The Dockerfile and non-root smoke script are provided; container
-  execution must pass in CI or on a machine with a running Docker daemon.
+- Local Docker execution: the local daemon is unavailable, so container
+  execution was validated on Linux amd64 in GitHub Actions instead. Linux arm64
+  has a pinned artifact in the Dockerfile but was not execution-tested.
 - Real household search recall: requires a separately authorized evaluation.
   This implementation intentionally does not query private documents.
 
