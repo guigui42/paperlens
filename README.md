@@ -186,6 +186,11 @@ the cache uses about 240 MB of the container's memory for its lifetime
 write the runtime directory can alter the cached CLI, so keep it private to
 the Paperlens user, as with the binary itself.
 
+When AI is used, the private runtime starts while the original Paperless query
+runs, so CLI start-up (about 1.6 s) overlaps the request instead of following
+it. A runtime that is never used (Paperless error, cancellation) is still torn
+down with the same fail-closed checks.
+
 The model list is cached for up to 10 minutes per process and cleared on any
 session or inference failure. It is capability metadata only: every search
 still starts a fresh runtime that authenticates with the configured token.
