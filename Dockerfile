@@ -10,7 +10,7 @@ ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 # Pair verified against the SDK's v1.0.28 copilotCliVersion metadata.
-# Release v1.0.105's native artifact reports 1.0.109-1; checksums pin its exact bytes.
+# Checksums pin the exact runtime bytes; runtime homes must stay isolated.
 RUN set -eu; \
     case "$TARGETARCH" in \
       amd64) arch=x64; hash=aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2 ;; \
@@ -22,14 +22,14 @@ RUN set -eu; \
     mkdir /opt/copilot; tar -xzf /tmp/copilot.tar.gz -C /opt/copilot; \
     rm /tmp/copilot.tar.gz; \
     groupadd --gid 10001 paperlens; useradd --uid 10001 --gid 10001 --no-create-home paperlens; \
-    mkdir /data /work; chown 10001:10001 /data /work
+    mkdir /data /work /runtime; chown 10001:10001 /data /work /runtime
 COPY --from=build /out/paperlens /usr/local/bin/paperlens
 USER 10001:10001
 WORKDIR /work
 ENV PAPERLENS_LISTEN=0.0.0.0:8080 \
-    HOME=/tmp/paperlens-home \
+    HOME=/runtime/home \
     PAPERLENS_STATE_DIR=/data \
-    PAPERLENS_RUNTIME_DIR=/tmp/paperlens-runtime \
+    PAPERLENS_RUNTIME_DIR=/runtime/jobs \
     COPILOT_CLI_PATH=/opt/copilot/copilot
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["paperlens", "health"]

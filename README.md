@@ -113,15 +113,16 @@ Copilot home, repository instructions or installed MCP servers.
 |---|---|
 | Go SDK | `github.com/github/copilot-sdk/go v1.0.28` |
 | CLI release artifact | `github/copilot-cli v1.0.105`, SHA-256 verified |
-| Native CLI's reported version | `1.0.109-1` in the verified macOS artifact |
+| CLI version in isolated homes | `1.0.105` on macOS and Linux |
 | Default model | `gpt-5.4`, configurable and checked against the identity's model list |
 | HTMX | 4.0.1 |
 | Alpine CSP | 3.17.5 |
 
 The CLI release pin comes from the
 [SDK's own `copilotCliVersion`](https://github.com/github/copilot-sdk/blob/v1.0.28/nodejs/package.json).
-The release label and native `--version` output differ; do not silently substitute
-an arbitrary installed CLI. Download the matching platform artifact and verify
+Check the version with an isolated home: the release launcher can otherwise use
+an ambient cached runtime. Do not silently substitute an arbitrary installed
+CLI. Download the matching platform artifact and verify
 it against [the release checksums](https://github.com/github/copilot-cli/releases/tag/v1.0.105).
 Docker includes the Linux runtime with fixed checksums. Go's binary alone is not
 sufficient. See [SDK local runtime setup](https://github.com/github/copilot-sdk/blob/v1.0.28/docs/setup/local-cli.md).
@@ -222,7 +223,11 @@ docker compose logs --tail=50
 
 The example publishes only loopback, drops capabilities, uses a read-only root
 filesystem, runs non-root, persists receipts/keys in `/data`, and uses tmpfs for
-runtime state. Put a LAN/VPN reverse proxy in front if needed, preserving the
+runtime state. `/runtime` needs the `exec` mount option because the pinned CLI
+extracts and loads its native addon there. Upload temporary storage remains on
+the separate `noexec` `/tmp` mount. This permits the trusted runtime's native
+library loading, not model shell/filesystem tools. Put a LAN/VPN reverse proxy
+in front if needed, preserving the
 configured Host. The example is not a household-stack deployment.
 
 `/healthz` checks the HTTP process. `/readyz` checks access to the metadata

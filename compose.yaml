@@ -18,7 +18,8 @@ services:
     volumes:
       - state:/data
     tmpfs:
-      - /tmp:uid=10001,gid=10001,mode=700
+      - /tmp:noexec,uid=10001,gid=10001,mode=700
+      - /runtime:exec,uid=10001,gid=10001,mode=700
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

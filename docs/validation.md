@@ -61,9 +61,11 @@ server identity to evaluate actual inference on synthetic data.
 
 ## Reproducible runtime check
 
-The SDK's pinned metadata names CLI release `v1.0.105`. Its verified macOS
-artifact reports native version `1.0.109-1`. The release artifacts are pinned by
-SHA-256 rather than trusting that string alone.
+The SDK's pinned metadata names CLI release `v1.0.105`. The verified macOS and
+Linux artifacts report `1.0.105` with isolated homes. An initial version check
+without isolation resolved an ambient cached runtime instead, which is why the
+application supplies its own home, configuration, work and cache directories.
+Release artifacts are also pinned by SHA-256.
 
 ```sh
 PAPERLENS_TEST_CLI=/absolute/path/to/pinned/copilot \

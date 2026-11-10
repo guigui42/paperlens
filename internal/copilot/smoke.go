@@ -26,7 +26,16 @@ func Smoke(ctx context.Context, path string) (err error) {
 	if !filepath.IsAbs(path) {
 		return errors.New("absolute COPILOT_CLI_PATH required")
 	}
-	root, err := os.MkdirTemp("", "paperlens-runtime-check-")
+	parent := os.Getenv("PAPERLENS_RUNTIME_DIR")
+	if parent != "" {
+		if !filepath.IsAbs(parent) {
+			return errors.New("absolute PAPERLENS_RUNTIME_DIR required")
+		}
+		if err := os.MkdirAll(parent, 0700); err != nil {
+			return err
+		}
+	}
+	root, err := os.MkdirTemp(parent, "search-check-")
 	if err != nil {
 		return err
 	}
