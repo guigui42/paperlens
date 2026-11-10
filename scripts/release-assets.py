@@ -1,17 +1,66 @@
 #!/usr/bin/env python3
 """Validate stable releases and generate public, digest-pinned deployment assets."""
 import argparse
+import base64
 import hashlib
 import json
 from pathlib import Path
 import re
 import sys
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 IMAGE = re.compile(r"ghcr\.io/[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*")
 REVISION = re.compile(r"[0-9a-f]{40}")
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def check_image_tag(image, tag, expected, opener=None):
+    if not IMAGE.fullmatch(image) or not DIGEST.fullmatch(expected):
+        raise ValueError("invalid registry image or expected digest")
+    version(tag)
+    actor, token = os.environ.get("GITHUB_ACTOR", ""), os.environ.get("GH_TOKEN", "")
+    if not actor or not token:
+        raise ValueError("registry inspection requires the workflow identity")
+    opener = opener or urllib.request.build_opener(NoRedirect())
+    repository = image.removeprefix("ghcr.io/")
+    scope = urllib.parse.urlencode({"service": "ghcr.io", "scope": "repository:" + repository + ":pull"})
+    authorization = base64.b64encode((actor + ":" + token).encode()).decode()
+    request = urllib.request.Request("https://ghcr.io/token?" + scope,
+                                     headers={"Authorization": "Basic " + authorization})
+    try:
+        with opener.open(request, timeout=30) as response:
+            data = json.loads(response.read(65536))
+        bearer = data.get("token")
+        if not isinstance(bearer, str) or not bearer:
+            raise ValueError("registry did not return an inspection token")
+        request = urllib.request.Request("https://ghcr.io/v2/" + repository + "/manifests/" + tag,
+                                         headers={"Authorization": "Bearer " + bearer,
+                                                  "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"})
+        try:
+            with opener.open(request, timeout=30) as response:
+                actual = response.headers.get("Docker-Content-Digest")
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                try:
+                    codes = {entry.get("code") for entry in json.loads(error.read(65536)).get("errors", [])}
+                except (ValueError, AttributeError, TypeError):
+                    codes = set()
+                if codes == {"MANIFEST_UNKNOWN"}:
+                    return
+            raise ValueError("registry inspection failed; tag absence was not confirmed") from None
+        if actual != expected:
+            raise ValueError("refusing to overwrite an existing version tag with different bytes")
+    except (urllib.error.URLError, OSError):
+        raise ValueError("registry authentication or transport failed; publication stopped") from None
 
 
 def version(tag):
@@ -170,6 +219,10 @@ def main():
     platforms.add_argument("index", type=Path)
     manifest = commands.add_parser("manifest-digest")
     manifest.add_argument("index", type=Path)
+    registry = commands.add_parser("check-image")
+    registry.add_argument("image")
+    registry.add_argument("tag")
+    registry.add_argument("expected")
     generate = commands.add_parser("assets")
     for option in ("tag", "image", "digest", "revision", "amd64", "arm64"):
         generate.add_argument("--" + option, required=True)
@@ -183,6 +236,8 @@ def main():
         verify_platforms(json.loads(args.index.read_text()))
     elif args.command == "manifest-digest":
         print(manifest_digest(args.index))
+    elif args.command == "check-image":
+        check_image_tag(args.image, args.tag, args.expected)
     else:
         assets(args.tag, args.image, args.digest, args.revision, args.amd64, args.arm64, args.output)
 

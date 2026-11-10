@@ -55,3 +55,4 @@ html[data-theme="dark"] {
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important}}
 .upload-sending{display:none;color:var(--cp-text-soft);font-size:13px}.htmx-request .upload-sending{display:block}
 html[data-theme="dark"] .lede,html[data-theme="dark"] .filters summary,html[data-theme="dark"] .mode,html[data-theme="dark"] .demo-banner,html[data-theme="dark"] .filter-note,html[data-theme="dark"] .back{color:var(--cp-text-soft)}
+html[data-theme="dark"] .empty p,html[data-theme="dark"] .dropzone span{color:var(--cp-text-soft)}

@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
 document.addEventListener("htmx:after:request", event => {
   const response = event.detail?.ctx?.response;
   if (response && response.status >= 400) {
+    event.preventDefault();
     const region = document.getElementById("upload-result") || document.getElementById("results");
     if (region) {
       region.textContent = `Request failed (${response.status}). Reload the page before trying again. An upload may already have been accepted; check Paperless first.`;

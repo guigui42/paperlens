@@ -133,3 +133,9 @@ Failed publication can be retried with **Re-run failed jobs** so already-tested
 platform digests remain the same. Never move a published version tag. If content
 must change, create a new patch version. `latest` is mutable; version digests are
 the rollback boundary.
+
+Publication rechecks stable-version freshness immediately before moving mutable
+tags, even on a resumed job. Registry lookup failures block publication unless
+GHCR explicitly confirms `MANIFEST_UNKNOWN`; an existing version must match the
+expected digest. Authentication, transport and registry errors are never treated
+as evidence that a tag is absent.

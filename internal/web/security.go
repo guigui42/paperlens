@@ -37,10 +37,11 @@ func keyFile(dir string) ([]byte, error) {
 	if _, err = rand.Read(key); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := os.CreateTemp(dir, ".browser-key-")
 	if err != nil {
 		return nil, err
 	}
+	defer os.Remove(f.Name())
 	if _, err = f.Write(key); err != nil {
 		f.Close()
 		return nil, err
@@ -49,7 +50,31 @@ func keyFile(dir string) ([]byte, error) {
 		f.Close()
 		return nil, err
 	}
-	return key, f.Close()
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+	if err = os.Link(f.Name(), path); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if len(existing) != 32 {
+			return nil, errors.New("invalid browser signing key")
+		}
+		return existing, nil
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	if err = directory.Sync(); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 func (s *Server) sign(value string) string {
 	h := hmac.New(sha256.New, s.key)
@@ -64,7 +89,7 @@ func (s *Server) browser(w http.ResponseWriter, r *http.Request) string {
 		}
 	}
 	id := randomID()
-	http.SetCookie(w, &http.Cookie{Name: "paperlens_browser", Value: id + "." + s.sign("browser:"+id), Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.config.Origin, "https://"), SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 60 * 60})
+	http.SetCookie(w, &http.Cookie{Name: "paperlens_browser", Value: id + "." + s.sign("browser:"+id), Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.config.Origin, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 60 * 60})
 	return id
 }
 func (s *Server) protect(next http.Handler) http.Handler {

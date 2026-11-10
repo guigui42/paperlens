@@ -51,6 +51,15 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agent := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Model: c.Model, Root: c.RuntimeDir}
+	if err := agent.Prepare(); err != nil {
+		return err
+	}
+	defer func() {
+		if err := agent.Close(); err != nil {
+			slog.Error("runtime ownership release failed")
+		}
+	}()
 	var api paperless.API
 	if c.Demo {
 		d := demo.New()
@@ -77,10 +86,6 @@ func run() error {
 		}
 		if engine.ValidatePolicy(vocab) != nil {
 			slog.Warn("AI unavailable at startup", "reason", "exclusion_policy_unresolved")
-		}
-		agent := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Model: c.Model, Root: c.RuntimeDir}
-		if err := agent.Prepare(); err != nil {
-			return err
 		}
 		engine.Agent = agent
 	}
@@ -126,13 +131,13 @@ func health() error {
 	if listen == "" {
 		listen = "127.0.0.1:8080"
 	}
-	_, port, err := net.SplitHostPort(listen)
+	target, err := healthTarget(listen)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:"+port+"/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
 	if err != nil {
 		return err
 	}
@@ -146,4 +151,18 @@ func health() error {
 		return errors.New("unhealthy")
 	}
 	return nil
+}
+
+func healthTarget(listen string) (string, error) {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", err
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz", nil
 }

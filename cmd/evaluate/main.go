@@ -34,6 +34,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		defer func() {
+			if err := a.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "runtime ownership release failed")
+			}
+		}()
 		agent = a
 		kind = "live Copilot model: " + c.Model + "; synthetic archive, not actual Paperless index"
 	}

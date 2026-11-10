@@ -54,7 +54,16 @@ func TestLongOCRWindow(t *testing.T) {
 	if len([]rune(got)) > 400 || !strings.Contains(got, "needle evidence") || !strings.Contains(content, got) {
 		t.Fatal("window is not bounded contiguous matching evidence")
 	}
+
 	if got = excerptWindow(content, "notfound", 100); len([]rune(got)) != 100 {
 		t.Fatal("fallback window is not bounded")
+	}
+}
+
+func TestOCRWindowMapsExpandedAccentsToSource(t *testing.T) {
+	content := strings.Repeat("cœur ", 200) + "distinctive needle evidence" + strings.Repeat(" closing text", 200)
+	got := excerptWindow(content, "distinctive needle", 200)
+	if !strings.Contains(got, "distinctive needle evidence") || !strings.Contains(content, got) {
+		t.Fatal("expanded normalization hid the evidence")
 	}
 }

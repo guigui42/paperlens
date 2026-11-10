@@ -40,7 +40,7 @@ docker exec "$name" paperlens runtime-check
 docker exec "$name" paperlens health
 port="$(docker port "$name" 8080/tcp | cut -d: -f2)"
 curl --fail --silent --show-error -H 'Host: localhost:8080' "http://127.0.0.1:$port/readyz"
-docker exec "$name" sh -c 'test -z "$(find /runtime/jobs -mindepth 1 -print -quit)"'
+docker exec "$name" sh -c 'test -z "$(find /runtime/jobs -mindepth 1 ! -name .paperlens-runtime.lock -print -quit)"'
 docker stop --time 45 "$name" >/dev/null
 test "$(docker inspect --format '{{.State.ExitCode}}' "$name")" = 0
 echo "non-root, read-only filesystem, readiness, restricted runtime and cleanup smoke passed"

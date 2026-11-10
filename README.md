@@ -9,6 +9,10 @@ build, CDN, vector database, archive replica, or chatbot.
 the configured Paperless account.** Host checks and browser cookies are not
 authentication. Do not expose this service publicly.
 
+The browser-scoping cookie uses `SameSite=Lax` so top-level links from dashboards
+or saved receipts retain their identity. It is not authentication; every
+mutation still requires the exact canonical Origin and a valid CSRF token.
+
 The browser policy is `Referrer-Policy: same-origin`: it sends no referrer to
 other origins while keeping same-origin fetches compatible with WebKit's
 `Origin` handling. Explicit missing, opaque (`null`) and foreign origins are
@@ -220,8 +224,9 @@ runtime shutdown, a forced cleanup timeout, or failed local-state removal still
 disables AI until restart, with a distinct user-facing notice. The pinned SDK
 does not provide typed process-exit confirmation for an errored `Stop`, so such
 errors remain fail-closed rather than being guessed harmless. A dedicated
-runtime root is cleaned of app-named
-orphan searches at startup.
+runtime root is exclusively locked before orphan cleanup at startup, including
+keyword-only startup. A second process must use a different runtime directory;
+it cannot sweep another server or evaluator's active sessions.
 
 Only the signing key and bounded receipts persist in app storage. Queries,
 document snippets and results live in memory until snapshot expiry; no search

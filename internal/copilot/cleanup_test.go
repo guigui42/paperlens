@@ -98,9 +98,13 @@ func TestRecoverableSessionErrorsDoNotDisableAI(t *testing.T) {
 func TestUnconfirmedStopAndStateRemovalDisableAI(t *testing.T) {
 	t.Run("process", func(t *testing.T) {
 		a := &Agent{}
-		err := a.cleanupRuntime(false, filepath.Join(t.TempDir(), "search-test"), "", nil, &teardownClient{stopErr: errors.New("unconfirmed stop")}, time.Second)
+		client := &teardownClient{stopErr: errors.New("unconfirmed stop")}
+		err := a.cleanupRuntime(false, filepath.Join(t.TempDir(), "search-test"), "", nil, client, time.Second)
 		if !errors.Is(err, search.ErrAIDisabled) || !a.unhealthy.Load() {
 			t.Fatal(err)
+		}
+		if !client.forced.Load() {
+			t.Fatal("unconfirmed stop did not force-stop the runtime")
 		}
 		_, err = a.Rank(context.Background(), "synthetic", emptyTools{})
 		if !errors.Is(err, search.ErrAIDisabled) {

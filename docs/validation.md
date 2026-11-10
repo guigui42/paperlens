@@ -18,6 +18,12 @@ public record. Hosted relevance evaluations use only the synthetic archive.
 - Browser-scoped jobs and receipts, same-origin/Host/CSRF checks, safe rendering,
   preview/download, upload MIME validation, duplicate handling, restart recovery
   and bounded queues.
+- Runtime-root ownership, atomic browser-key publication, force-stop on failed
+  runtime shutdown, one-call candidate reuse, normalized OCR source offsets,
+  late cancellation, error-target preservation and polling synchronization have
+  focused regression coverage. The approved Lax cookie policy is checked with
+  a synthetic external-dashboard receipt navigation; Origin/CSRF rejection
+  coverage remains unchanged.
 - 16 Playwright checks pass using installed Chrome, with desktop and mobile
   emulation. Actual vendored HTMX 4 and Alpine CSP run under the application's
   CSP. Checks include keyboard search, theme, filters, cancellation, errors,

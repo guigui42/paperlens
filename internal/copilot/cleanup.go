@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,14 +26,18 @@ func (a *Agent) cleanupRuntime(cancelled bool, dir, id string, session cleanupSe
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var forced atomic.Bool
+	var forceOnce sync.Once
 	forceDone := make(chan struct{})
+	force := func() {
+		forceOnce.Do(func() {
+			forced.Store(true)
+			client.ForceStop()
+			close(forceDone)
+		})
+	}
 	// Disconnect has no context in the pinned SDK. ForceStop unblocks its RPC
 	// and Stop's I/O; forced or unconfirmed termination remains fail-closed.
-	timer := time.AfterFunc(timeout, func() {
-		forced.Store(true)
-		client.ForceStop()
-		close(forceDone)
-	})
+	timer := time.AfterFunc(timeout, force)
 	rpcFailed := false
 	warn := func(stage string, err error) {
 		if err != nil {
@@ -50,6 +55,9 @@ func (a *Agent) cleanupRuntime(cancelled bool, dir, id string, session cleanupSe
 		}
 	}
 	stopErr := client.Stop()
+	if stopErr != nil {
+		force()
+	}
 	if !timer.Stop() {
 		<-forceDone
 	}

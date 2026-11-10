@@ -106,7 +106,7 @@ func TestHardFiltersAndNoRelaxation(t *testing.T) {
 }
 func TestBudgetsAndDeduplication(t *testing.T) {
 	a := agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
-		if _, err := tools.Search(ctx, "insurance"); err == nil {
+		if _, err := tools.Search(ctx, "different insurance query"); err == nil {
 			t.Fatal("search call budget bypassed")
 		}
 		if _, err := tools.Excerpt(ctx, 1); err != nil {
@@ -128,8 +128,8 @@ func TestBudgetsAndDeduplication(t *testing.T) {
 		t.Fatal(out, err)
 	}
 	e = engine(agentFunc(func(ctx context.Context, q string, t search.Tools) (search.Ranking, error) {
-		t.Search(ctx, q)
-		t.Search(ctx, q)
+		t.Search(ctx, "home insurance certificate")
+		t.Search(ctx, "home insurance policy")
 		return search.Ranking{Results: []search.Pick{}}, nil
 	}))
 	out, err = e.Run(context.Background(), "home insurance", paperless.Filters{}, false, nil)

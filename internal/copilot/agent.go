@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -20,33 +18,7 @@ import (
 type Agent struct {
 	Path, Token, Model, Root string
 	unhealthy                atomic.Bool
-}
-
-// Prepare creates the private runtime root and removes only app-named orphan jobs.
-// The runtime root must be dedicated to this app, never a user's Copilot home.
-func (a *Agent) Prepare() error {
-	if !filepath.IsAbs(a.Path) || !filepath.IsAbs(a.Root) {
-		return errors.New("absolute CLI and dedicated runtime paths required")
-	}
-	if err := os.MkdirAll(a.Root, 0700); err != nil {
-		return err
-	}
-	if err := os.Chmod(a.Root, 0700); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(a.Root)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "search-") {
-			return errors.New("runtime directory contains non-Paperlens files; choose an empty dedicated directory")
-		}
-		if err := os.RemoveAll(filepath.Join(a.Root, entry.Name())); err != nil {
-			return errors.New("cannot clean previous Copilot runtime state")
-		}
-	}
-	return nil
+	owner                    *os.File
 }
 
 func (a *Agent) client(dir string) *sdk.Client {
@@ -65,7 +37,7 @@ func sessionConfig(ctx context.Context, dir, model string, t search.Tools) *sdk.
 	tools := []sdk.Tool{
 		sdk.DefineTool("lookup_metadata", "Read allowed metadata vocabulary. Explicit user filters are enforced server-side.",
 			func(_ struct{}, _ sdk.ToolInvocation) (paperless.Vocabulary, error) { return t.Lookup(), ctx.Err() }),
-		sdk.DefineTool("search_documents", "Search Paperless with a short focused keyword query. Hard filters cannot be changed. Up to five additional searches.",
+		sdk.DefineTool("search_documents", "Search Paperless with a short focused keyword query. Reusing the original query returns cached eligible candidates without using another search call. Hard filters cannot be changed.",
 			func(p struct {
 				Query string `json:"query"`
 			}, _ sdk.ToolInvocation) ([]search.Candidate, error) {
@@ -123,7 +95,7 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 	}
 	dir, err := os.MkdirTemp(a.Root, "search-")
 	if err != nil {
-		return ranking, errors.New("cannot create isolated Copilot runtime")
+		return ranking, search.ErrAIRuntime
 	}
 	client := a.client(dir)
 	var session *sdk.Session
@@ -138,11 +110,11 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 		}
 	}()
 	if err = client.Start(ctx); err != nil {
-		return ranking, errors.New("copilot runtime unavailable; check pinned CLI installation")
+		return ranking, search.ErrAIRuntime
 	}
 	models, err := client.ListModels(ctx)
 	if err != nil {
-		return ranking, errors.New("copilot authentication or model access failed; check server identity and entitlement")
+		return ranking, search.ErrAIAuthentication
 	}
 	found := false
 	for _, model := range models {
@@ -151,18 +123,18 @@ func (a *Agent) Rank(ctx context.Context, query string, t search.Tools) (ranking
 		}
 	}
 	if !found {
-		return ranking, errors.New("configured Copilot model is unavailable for this identity")
+		return ranking, search.ErrAIModel
 	}
 	session, err = client.CreateSession(ctx, sessionConfig(ctx, dir, a.Model, t))
 	if err != nil {
-		return ranking, errors.New("cannot create restricted Copilot session")
+		return ranking, search.ErrAISession
 	}
 	if err = verifyToolSurface(ctx, session); err != nil {
-		return ranking, err
+		return ranking, search.ErrAISession
 	}
 	reply, err := session.SendAndWait(ctx, sdk.MessageOptions{Prompt: query})
 	if err != nil {
-		return ranking, errors.New("copilot search failed or timed out")
+		return ranking, search.ErrAIInference
 	}
 	if reply == nil {
 		return ranking, errors.New("copilot returned no ranking")

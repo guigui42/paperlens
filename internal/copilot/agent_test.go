@@ -51,8 +51,9 @@ func TestPrepareOnlyDedicatedStorage(t *testing.T) {
 	if err := a.Prepare(); err != nil {
 		t.Fatal(err)
 	}
+	defer a.Close()
 	entries, _ := os.ReadDir(root)
-	if len(entries) != 0 {
+	if len(entries) != 1 || entries[0].Name() != runtimeLockName {
 		t.Fatal("orphan transcript remains")
 	}
 	os.WriteFile(filepath.Join(root, "not-ours"), []byte("safe"), 0600)
@@ -70,6 +71,7 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 	if err := a.Prepare(); err != nil {
 		t.Fatal(err)
 	}
+	defer a.Close()
 	dir, err := os.MkdirTemp(root, "search-")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +123,7 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) != 0 {
+	if err != nil || len(entries) != 1 || entries[0].Name() != runtimeLockName {
 		t.Fatal("runtime data survived cleanup")
 	}
 }

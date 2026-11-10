@@ -16,7 +16,7 @@
 {{define "home"}}{{template "head" .}}
 <main id="main" class="search-page">
 <section class="intro"><p class="eyebrow">LESS LOOKING. MORE FINDING.</p><h1>It's in your archive.<br><span>Let's find it.</span></h1><p class="lede">Describe the document you remember.<br class="mobile-break"> We'll look through the paperwork.</p></section>
-<form class="search-form" action="/search" method="post" hx-post="/search" hx-target="#results" hx-swap="outerHTML">
+<form class="search-form" action="/search" method="post" hx-post="/search" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label class="sr-only" for="query">Search your documents</label>
 <div class="search-box"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><input id="query" name="q" type="search" required maxlength="500" value="{{.Query}}" autocomplete="off" placeholder="The home insurance certificate for this year…" aria-describedby="search-privacy"><button class="primary" type="submit">Search <span aria-hidden="true">↗</span></button></div>
@@ -34,9 +34,9 @@
 {{template "results" .}}
 </main>{{template "foot" .}}{{end}}
 
-{{define "results"}}<section id="results" class="results" aria-live="polite" aria-label="Search results" {{if .Running}}hx-get="/jobs/{{.Job.ID}}" hx-trigger="every 700ms" hx-swap="outerHTML"{{end}}>
+{{define "results"}}<section id="results" class="results" aria-live="polite" aria-label="Search results" {{if .Running}}hx-get="/jobs/{{.Job.ID}}" hx-trigger="every 700ms" hx-swap="outerHTML" hx-sync="#main:abort"{{end}}>
 {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
-{{if .Running}}<div class="progress"><div><span class="pulse" aria-hidden="true"></span><strong>{{.Job.State}}</strong><p>Looking for evidence, not just matching words.</p></div><form method="post" action="/jobs/{{.Job.ID}}/cancel" hx-post="/jobs/{{.Job.ID}}/cancel" hx-target="#results" hx-swap="outerHTML"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">Cancel search</button></form></div>
+{{if .Running}}<div class="progress"><div><span class="pulse" aria-hidden="true"></span><strong>{{.Job.State}}</strong><p>Looking for evidence, not just matching words.</p></div><form method="post" action="/jobs/{{.Job.ID}}/cancel" hx-post="/jobs/{{.Job.ID}}/cancel" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">Cancel search</button></form></div>
 {{else if eq .Job.State "cancelled"}}<div class="notice">Search cancelled. No further retrieval will run.</div>
 {{else if or (eq .Job.State "error") (eq .Job.State "expired")}}<div class="notice error" role="alert">{{.Job.Error}}</div>
 {{else if eq .Job.State "done"}}
@@ -53,7 +53,7 @@
 {{end}}</section>{{end}}
 
 {{define "upload"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/">← Back to search</a><p class="eyebrow">ADD TO YOUR ARCHIVE</p><h1>One less loose paper.</h1><p class="lede">Upload a document. Paperless takes care of OCR and classification.</p>
-{{if .UploadEnabled}}<form class="upload-form" action="/upload" method="post" enctype="multipart/form-data" hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#upload-result" hx-swap="outerHTML">
+{{if .UploadEnabled}}<form id="upload-form" class="upload-form" action="/upload" method="post" enctype="multipart/form-data" hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#upload-result" hx-swap="outerHTML">
 <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="nonce" value="{{.Nonce}}">
 <label class="dropzone" @dragover.prevent="dragOver" @dragleave.prevent="dragLeave" @drop.prevent="dropFile" :class="dropClass"><strong>Drop a document here</strong><span>or choose a file from your device</span><input id="document-file" type="file" name="document" required aria-label="Choose document"></label><span x-text="uploadError" aria-live="polite"></span>
 <label>Title <span class="muted">(optional)</span><input type="text" name="title" maxlength="200" placeholder="A name you'll recognize"></label><button class="primary" type="submit">Upload to Paperless</button><p class="upload-sending" role="status">Uploading to Paperless. Keep this page open until a receipt appears.</p><p class="privacy">Uploads are not sent to Copilot. Do not retry an uncertain upload until you check Paperless.</p></form>
@@ -68,7 +68,8 @@
 {{else if eq .Receipt.State "consumed"}}<div class="notice success"><strong>Document stored.</strong><p><a href="/documents/{{.Receipt.Document}}">Preview document</a> · <a href="/upload">Upload another</a></p></div>
 {{else if eq .Receipt.State "duplicate"}}<div class="notice"><strong>Duplicate detected by Paperless.</strong><p>No new document was created. Search the archive for the existing copy.</p></div>
 {{else if eq .Receipt.State "failed"}}<div class="notice error"><strong>Ingestion failed.</strong><p>Check Paperless's task details before trying again.</p></div>
-{{else if or (eq .Receipt.State "unknown") (eq .Receipt.State "uploading")}}<div class="notice error"><strong>Upload outcome is uncertain.</strong><p>Check Paperless's documents and task list before uploading again. Paperlens will not automatically retry this file.</p></div>{{end}}</div>{{end}}
+{{else if or (eq .Receipt.State "unknown") (eq .Receipt.State "uploading")}}<div class="notice error"><strong>Upload outcome is uncertain.</strong><p>Check Paperless's documents and task list before uploading again. Paperlens will not automatically retry this file.</p></div>{{end}}</div>
+{{if .Receipt.ID}}<div id="upload-form" hx-swap-oob="outerHTML"><a href="/upload">Choose another document</a></div>{{end}}{{end}}
 {{define "preview"}}{{template "head" .}}<main id="main" class="preview-page"><a class="back" href="/">← Search</a><div class="preview-heading"><div><p class="eyebrow">DOCUMENT PREVIEW</p><h1>{{.Document.Title}}</h1><p>{{date .Document.Created}}</p></div><a class="button primary" href="/documents/{{.Document.ID}}/download">Download original</a></div>
 {{if .PDF}}<iframe class="pdf-frame" src="/documents/{{.Document.ID}}/preview" title="PDF preview"></iframe>
 {{else if or (eq .Document.MIME "image/png") (eq .Document.MIME "image/jpeg")}}<img class="document-image" src="/documents/{{.Document.ID}}/preview" alt="Preview of {{.Document.Title}}">

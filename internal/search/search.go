@@ -95,6 +95,7 @@ type job struct {
 	calls     int
 	limited   bool
 	stage     func(string)
+	queries   map[string]bool
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
@@ -110,7 +111,7 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		return Output{}, err
 	}
 	excluded, policyErr := e.exclusionIDs(v)
-	j := &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage}
+	j := &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
 	}
@@ -144,6 +145,9 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			out.Results = j.fallback(query)
 			out.Mode = "Keyword fallback"
 			out.Notice = "AI search could not produce verified results. Showing ordinary keyword matches instead."
+			if safe := agentFailureNotice(agentErr); safe != "" {
+				out.Notice = safe + ". Showing keyword results."
+			}
 			switch {
 			case errors.Is(agentErr, ErrAIDisabled):
 				out.Notice = ErrAIDisabled.Error() + ". Showing keyword results."
@@ -204,6 +208,9 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 500 {
 		return nil, errors.New("query exceeds limit")
 	}
+	if j.queries[query] {
+		return j.candidates(), nil
+	}
 	if j.calls >= j.limits.Searches {
 		j.limited = true
 		return nil, errors.New("search call budget exhausted")
@@ -216,6 +223,10 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	if p.Next != nil || p.Count > len(p.Results) {
 		j.limited = true
 	}
+	if j.queries == nil {
+		j.queries = map[string]bool{}
+	}
+	j.queries[query] = true
 	seen := map[int]bool{}
 	for n, d := range p.Results {
 		if d.ID < 1 || seen[d.ID] || !j.filters.Matches(d) {
@@ -230,6 +241,10 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		j.docs[d.ID] = d
 		j.ranks[d.ID] += 1 / float64(60+n+1)
 	}
+	return j.candidates(), nil
+}
+
+func (j *job) candidates() []Candidate {
 	var result []Candidate
 	for _, d := range j.docs {
 		if !j.isExcluded(d) {
@@ -243,7 +258,7 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		}
 		return x < y
 	})
-	return result, nil
+	return result
 }
 func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	j.mu.Lock()
@@ -339,10 +354,9 @@ func Decode(raw string) (Ranking, error) {
 }
 
 // Fold provides deterministic accent/case normalization for local relevance signals.
-func Fold(s string) string {
-	replacer := strings.NewReplacer("é", "e", "è", "e", "ê", "e", "ë", "e", "à", "a", "â", "a", "ä", "a", "î", "i", "ï", "i", "ô", "o", "ö", "o", "ù", "u", "û", "u", "ü", "u", "ç", "c", "œ", "oe")
-	return replacer.Replace(strings.ToLower(s))
-}
+func Fold(s string) string { return accentFold.Replace(strings.ToLower(s)) }
+
+var accentFold = strings.NewReplacer("é", "e", "è", "e", "ê", "e", "ë", "e", "à", "a", "â", "a", "ä", "a", "î", "i", "ï", "i", "ô", "o", "ö", "o", "ù", "u", "û", "u", "ü", "u", "ç", "c", "œ", "oe")
 
 // Latest detects recency intent without converting mentioned years into issue dates.
 func Latest(q string) bool {
@@ -393,7 +407,16 @@ func excerptWindow(content, query string, limit int) string {
 			continue
 		}
 		if pos := strings.Index(hay, term); pos >= 0 {
-			start := max(0, min(len(runes)-limit, len([]rune(hay[:pos]))-120))
+			sourcePos, normalizedBytes := 0, 0
+			for sourcePos < len(runes) {
+				width := len(Fold(string(runes[sourcePos])))
+				if normalizedBytes+width > pos {
+					break
+				}
+				normalizedBytes += width
+				sourcePos++
+			}
+			start := max(0, min(len(runes)-limit, sourcePos-120))
 			return string(runes[start : start+limit])
 		}
 	}

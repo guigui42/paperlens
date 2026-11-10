@@ -250,19 +250,18 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	s.renderSearch(w, r, p)
 }
 func (s *Server) cancelSearch(w http.ResponseWriter, r *http.Request) {
-	p, owner := s.base(w, r)
+	_, owner := s.base(w, r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
 	if !s.csrf(r, owner) {
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	item, ok := s.jobs.stop(r.PathValue("id"), owner)
+	_, ok := s.jobs.stop(r.PathValue("id"), owner)
 	if !ok {
 		http.Error(w, "Search not found", 404)
 		return
 	}
-	p.Job = item
-	s.render(w, "results", p)
+	s.poll(w, r)
 }
 func documentID(r *http.Request) (int, error) {
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -470,6 +469,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		rec.Task = task
 	}
 	if err = s.receipts.update(rec); err != nil {
+		p.Receipt = rec
 		fail("Upload may have been accepted, but its receipt could not be saved. Check Paperless before uploading again.")
 		return
 	}
