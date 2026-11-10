@@ -1,0 +1,12 @@
+.env
+.cache/
+.state/
+.secrets/
+.impeccable/
+node_modules/
+test-results/
+playwright-report/
+coverage.out
+__pycache__/
+/paperlens
+*.log

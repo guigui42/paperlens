@@ -1,0 +1,77 @@
+{{define "head"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Your archive, found</title>
+<script src="/static/app.js"></script>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/htmx-4.0.1.min.js" defer></script>
+<script src="/static/vendor/alpine-csp-3.17.5.min.js" defer></script>
+</head><body x-data="paperlens">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><a class="brand" href="/" aria-label="Paperlens home"><svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><rect x="4" y="3" width="18" height="24" rx="3"/><path d="M9 10h8M9 15h5"/><circle cx="22" cy="22" r="6"/><path d="m27 27 4 4"/></svg>paperlens<span class="brand-dot">.</span></a>
+<nav aria-label="Main"><span class="archive-label">{{if .Demo}}Synthetic demo{{else}}Shared archive{{end}}</span><a href="/upload">Upload document</a><button type="button" class="theme-button" @click="toggleTheme" aria-label="Toggle color theme">◐</button></nav></header>
+{{if .Demo}}<div class="demo-banner">Demo archive · fictional documents only · no AI requests</div>{{end}}
+{{end}}
+{{define "foot"}}<footer><span>Paperless keeps your documents. Paperlens helps you find them.</span><span>Private network only</span></footer></body></html>{{end}}
+
+{{define "home"}}{{template "head" .}}
+<main id="main" class="search-page">
+<section class="intro"><p class="eyebrow">LESS LOOKING. MORE FINDING.</p><h1>It's in your archive.<br><span>Let's find it.</span></h1><p class="lede">Describe the document you remember.<br class="mobile-break"> We'll look through the paperwork.</p></section>
+<form class="search-form" action="/search" method="post" hx-post="/search" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label class="sr-only" for="query">Search your documents</label>
+<div class="search-box"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><input id="query" name="q" type="search" required maxlength="500" value="{{.Query}}" autocomplete="off" placeholder="The home insurance certificate for this year…" aria-describedby="search-privacy"><button class="primary" type="submit">Search <span aria-hidden="true">↗</span></button></div>
+<div class="search-options"><details class="filters"><summary>Refine your search</summary><div class="filter-grid">
+<label>Issued after<input type="date" name="after" value="{{.Filters.After}}"></label><label>Issued before<input type="date" name="before" value="{{.Filters.Before}}"></label>
+<label>Correspondent<select name="correspondent" aria-label="Correspondent"><option value="">Any correspondent</option>{{range .Vocab.Correspondents}}<option value="{{.ID}}" {{if eq $.Filters.Correspondent .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+<label>Document type<select name="type" aria-label="Document type"><option value="">Any type</option>{{range .Vocab.Types}}<option value="{{.ID}}" {{if eq $.Filters.Type .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+<label>Tag<select name="tag" aria-label="Tag"><option value="">Any tag</option>{{range .Vocab.Tags}}<option value="{{.ID}}" {{if eq $.Filters.Tag .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+<label>Custom field<select name="field" aria-label="Custom field"><option value="">No custom filter</option>{{range .Vocab.Fields}}{{if filterable .DataType}}<option value="{{.ID}}" {{if eq $.Filters.Field .ID}}selected{{end}}>{{.Name}} ({{.DataType}})</option>{{end}}{{end}}</select></label>
+<label>Exact custom value<input name="value" list="custom-options" maxlength="200" value="{{.Filters.Value}}" placeholder="Text, number, true/false or YYYY-MM-DD"><datalist id="custom-options">{{range .Vocab.Fields}}{{$field:=.Name}}{{range .ExtraData.Options}}<option value="{{.ID}}">{{$field}}: {{.Label}}</option>{{end}}{{end}}</datalist></label><p class="filter-note">Date filters use the document's issue date, not a year mentioned in its text. Filters are never relaxed.</p>
+</div></details><label class="mode"><input type="checkbox" name="mode" value="keyword" {{if not .AI}}checked{{end}}>Keyword only</label></div>
+</form>
+<div class="examples"><span>TRY SOMETHING LIKE</span><button type="button" data-query="Latest home insurance certificate">Home insurance</button><button type="button" data-query="Facture électricité septembre 2025">Electricity bill</button><button type="button" data-query="Warranty for the washing machine">Appliance warranty</button></div>
+<p id="search-privacy" class="privacy">Only submitted searches start a job. AI mode sends selected document excerpts to your configured Copilot model. Required exclusion tags keep protected documents out of AI.</p>
+{{template "results" .}}
+</main>{{template "foot" .}}{{end}}
+
+{{define "results"}}<section id="results" class="results" aria-live="polite" aria-label="Search results" {{if .Running}}hx-get="/jobs/{{.Job.ID}}" hx-trigger="every 700ms" hx-swap="outerHTML" hx-sync="#main:abort"{{end}}>
+{{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+{{if .Running}}<div class="progress"><div><span class="pulse" aria-hidden="true"></span><strong>{{.Job.State}}</strong><p>Looking for evidence, not just matching words.</p></div><form method="post" action="/jobs/{{.Job.ID}}/cancel" hx-post="/jobs/{{.Job.ID}}/cancel" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">Cancel search</button></form></div>
+{{else if eq .Job.State "cancelled"}}<div class="notice">Search cancelled. No further retrieval will run.</div>
+{{else if or (eq .Job.State "error") (eq .Job.State "expired")}}<div class="notice error" role="alert">{{.Job.Error}}</div>
+{{else if eq .Job.State "done"}}
+<div class="result-heading"><div><p class="eyebrow">{{.Job.Output.Mode}}</p><h2>Documents for “{{.Job.Query}}”</h2></div><span>{{.Job.Output.Candidates}} unique candidates · {{.Job.Output.Calls}} searches</span></div>
+{{if .Job.Output.Notice}}<div class="notice">{{.Job.Output.Notice}}</div>{{end}}
+{{if .Job.Output.Limited}}<div class="notice">Retrieval limits reached. These results are not exhaustive. Refine your query or filters.</div>{{end}}
+{{if not .Results}}<div class="empty"><h3>No matching evidence found.</h3><p>Try a document title, sender, or a more specific phrase. Missing OCR or no keyword overlap can hide a document. Your filters have not been relaxed.</p></div>{{end}}
+{{range .Results}}<article class="result-card">
+<div class="document-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M5 2h10l4 4v16H5zM14 2v5h5M8 11h8M8 15h8M8 19h5"/></svg></div>
+<div class="result-content"><div class="result-meta"><span>{{date .Document.Created}}</span>{{with term .Document.Correspondent $.Vocab.Correspondents}}<span>{{.}}</span>{{end}}{{with term .Document.DocumentType $.Vocab.Types}}<span>{{.}}</span>{{end}}{{if .Excluded}}<span class="badge">Not sent to AI</span>{{else if .Weak}}<span class="badge">Possible match</span>{{end}}</div>
+<h3><a href="/documents/{{.Document.ID}}">{{.Document.Title}}</a></h3><blockquote>{{.Quote}}</blockquote><p class="reason">{{.Reason}}</p>
+<div class="result-actions"><a href="/documents/{{.Document.ID}}">Preview</a><a href="/documents/{{.Document.ID}}/download">Download original</a><a href="{{docURL .Document.ID}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></div></div></article>{{end}}
+{{if or .HasNext .HasPrevious}}<nav class="pagination" aria-label="Results pages">{{if .HasPrevious}}<a href="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-get="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-target="#results" hx-swap="outerHTML">Previous</a>{{end}}{{if .HasNext}}<a href="/jobs/{{.Job.ID}}?page={{.Next}}" hx-get="/jobs/{{.Job.ID}}?page={{.Next}}" hx-target="#results" hx-swap="outerHTML">Next</a>{{end}}<span>Stable snapshot · kept up to 10 minutes; oldest completed searches may expire sooner when full</span></nav>{{end}}
+{{end}}</section>{{end}}
+
+{{define "upload"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/">← Back to search</a><p class="eyebrow">ADD TO YOUR ARCHIVE</p><h1>One less loose paper.</h1><p class="lede">Upload a document. Paperless takes care of OCR and classification.</p>
+{{if .UploadEnabled}}<form id="upload-form" class="upload-form" action="/upload" method="post" enctype="multipart/form-data" hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#upload-result" hx-swap="outerHTML">
+<input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="nonce" value="{{.Nonce}}">
+<label class="dropzone" @dragover.prevent="dragOver" @dragleave.prevent="dragLeave" @drop.prevent="dropFile" :class="dropClass"><strong>Drop a document here</strong><span>or choose a file from your device</span><input id="document-file" type="file" name="document" required aria-label="Choose document"></label><span x-text="uploadError" aria-live="polite"></span>
+<label>Title <span class="muted">(optional)</span><input type="text" name="title" maxlength="200" placeholder="A name you'll recognize"></label><button class="primary" type="submit">Upload to Paperless</button><p class="upload-sending" role="status">Uploading to Paperless. Keep this page open until a receipt appears.</p><p class="privacy">Uploads are not sent to Copilot. Do not retry an uncertain upload until you check Paperless.</p></form>
+{{else}}<div class="notice">Uploads are disabled. The administrator must confirm supported formats with PAPERLENS_UPLOAD_TYPES.</div>{{end}}
+{{template "upload-result" .}}
+{{if .Receipts}}<h2>Recent uploads in this browser</h2><ul class="receipt-list">{{range .Receipts}}<li><a href="/uploads/{{.ID}}">{{.State}}</a><time>{{.Created.Format "02 Jan 15:04"}}</time></li>{{end}}</ul>{{end}}
+</main>{{template "foot" .}}{{end}}
+{{define "receipt"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/upload">← Uploads</a><h1>Upload status</h1>{{template "upload-result" .}}</main>{{template "foot" .}}{{end}}
+{{define "upload-result"}}<div id="upload-result" aria-live="polite" class="upload-status" {{if eq .Receipt.State "processing"}}hx-get="/uploads/{{.Receipt.ID}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
+{{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+{{if eq .Receipt.State "processing"}}<div class="notice"><strong>Accepted. Paperless is processing your file.</strong><p>It is not a stored document yet. You can leave this page and check the receipt later.</p><a href="/uploads/{{.Receipt.ID}}">Keep this status link</a></div>
+{{else if eq .Receipt.State "consumed"}}<div class="notice success"><strong>Document stored.</strong><p><a href="/documents/{{.Receipt.Document}}">Preview document</a> · <a href="/upload">Upload another</a></p></div>
+{{else if eq .Receipt.State "duplicate"}}<div class="notice"><strong>Duplicate detected by Paperless.</strong><p>No new document was created. Search the archive for the existing copy.</p></div>
+{{else if eq .Receipt.State "failed"}}<div class="notice error"><strong>Ingestion failed.</strong><p>Check Paperless's task details before trying again.</p></div>
+{{else if or (eq .Receipt.State "unknown") (eq .Receipt.State "uploading")}}<div class="notice error"><strong>Upload outcome is uncertain.</strong><p>Check Paperless's documents and task list before uploading again. Paperlens will not automatically retry this file.</p></div>{{end}}</div>
+{{if .Receipt.ID}}<div id="upload-form" hx-swap-oob="outerHTML"><a href="/upload">Choose another document</a></div>{{end}}{{end}}
+{{define "preview"}}{{template "head" .}}<main id="main" class="preview-page"><a class="back" href="/">← Search</a><div class="preview-heading"><div><p class="eyebrow">DOCUMENT PREVIEW</p><h1>{{.Document.Title}}</h1><p>{{date .Document.Created}}</p></div><a class="button primary" href="/documents/{{.Document.ID}}/download">Download original</a></div>
+{{if .PDF}}<iframe class="pdf-frame" src="/documents/{{.Document.ID}}/preview" title="PDF preview"></iframe>
+{{else if or (eq .Document.MIME "image/png") (eq .Document.MIME "image/jpeg")}}<img class="document-image" src="/documents/{{.Document.ID}}/preview" alt="Preview of {{.Document.Title}}">
+{{else}}<div class="notice">This format does not have a safe inline preview. Download the original or open it in Paperless.</div>{{end}}
+<p><a href="{{.PaperlessURL}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></p></main>{{template "foot" .}}{{end}}
