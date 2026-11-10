@@ -202,7 +202,6 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	if p.Next != nil || p.Count > len(p.Results) {
 		j.limited = true
 	}
-	var result []Candidate
 	seen := map[int]bool{}
 	for n, d := range p.Results {
 		if d.ID < 1 || seen[d.ID] || !j.filters.Matches(d) {
@@ -216,10 +215,20 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		d.Content = excerptWindow(d.Content, query, j.limits.Characters)
 		j.docs[d.ID] = d
 		j.ranks[d.ID] += 1 / float64(60+n+1)
+	}
+	var result []Candidate
+	for _, d := range j.docs {
 		if !j.isExcluded(d) {
 			result = append(result, Candidate{ID: d.ID, Title: clip(d.Title, 250), Filename: clip(filename(d), 250), Date: d.Created})
 		}
 	}
+	sort.Slice(result, func(a, b int) bool {
+		x, y := result[a].ID, result[b].ID
+		if j.ranks[x] != j.ranks[y] {
+			return j.ranks[x] > j.ranks[y]
+		}
+		return x < y
+	})
 	return result, nil
 }
 func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
@@ -228,12 +237,12 @@ func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	if err := ctx.Err(); err != nil {
 		return Evidence{}, err
 	}
-	if text, ok := j.evidence[id]; ok {
-		return Evidence{id, text}, nil
-	}
 	d, ok := j.docs[id]
 	if !ok || j.isExcluded(d) {
 		return Evidence{}, errors.New("document is not an eligible retrieved candidate")
+	}
+	if text, ok := j.evidence[id]; ok {
+		return Evidence{id, text}, nil
 	}
 	if len(j.evidence) >= j.limits.Excerpts {
 		j.limited = true

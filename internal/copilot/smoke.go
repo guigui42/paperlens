@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -34,7 +35,7 @@ func Smoke(ctx context.Context, path string) (err error) {
 	client := a.client(root)
 	defer func() { err = errors.Join(err, client.Stop()) }()
 	if err = client.Start(ctx); err != nil {
-		return errors.New("cannot start pinned CLI runtime")
+		return fmt.Errorf("cannot start credential-free CLI smoke runtime: %w", err)
 	}
 	if _, err = client.Ping(ctx, "synthetic runtime check"); err != nil {
 		return errors.New("runtime protocol handshake failed")
