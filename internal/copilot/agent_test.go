@@ -15,6 +15,10 @@ import (
 
 type emptyTools struct{}
 
+func (emptyTools) Seed() search.Seed { return search.Seed{} }
+func (emptyTools) Limits() search.Limits {
+	return search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500}
+}
 func (emptyTools) Lookup() paperless.Vocabulary                               { return paperless.Vocabulary{} }
 func (emptyTools) Search(context.Context, string) ([]search.Candidate, error) { return nil, nil }
 func (emptyTools) Excerpt(context.Context, int) (search.Evidence, error) {
@@ -32,7 +36,7 @@ func TestPolicyDefaults(t *testing.T) {
 			t.Fatal("tool escaped allowlist", name)
 		}
 	}
-	for _, name := range []string{"lookup_metadata", "search_documents", "read_document_excerpt"} {
+	for _, name := range []string{"lookup_metadata", "search_documents", "read_document_excerpts"} {
 		out, err := c.Hooks.OnPreToolUse(sdk.PreToolUseHookInput{ToolName: name}, sdk.HookInvocation{})
 		if err != nil || out.PermissionDecision != "allow" {
 			t.Fatal(name)
@@ -47,14 +51,15 @@ func TestPrepareOnlyDedicatedStorage(t *testing.T) {
 	root := t.TempDir()
 	os.Mkdir(filepath.Join(root, "search-orphan"), 0700)
 	os.WriteFile(filepath.Join(root, "search-orphan", "events.jsonl"), []byte("synthetic"), 0600)
+	os.Mkdir(filepath.Join(root, pkgCacheName), 0700)
 	a := Agent{Path: "/example/copilot", Root: root}
 	if err := a.Prepare(); err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	entries, _ := os.ReadDir(root)
-	if len(entries) != 1 || entries[0].Name() != runtimeLockName {
-		t.Fatal("orphan transcript remains")
+	if len(entries) != 2 || entries[0].Name() != runtimeLockName || entries[1].Name() != pkgCacheName {
+		t.Fatal("orphan transcript remains or package cache was dropped")
 	}
 	os.WriteFile(filepath.Join(root, "not-ours"), []byte("safe"), 0600)
 	if err := a.Prepare(); err == nil {
@@ -105,7 +110,7 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 	}
 	for _, tool := range metadata.Tools {
 		switch tool.Name {
-		case "lookup_metadata", "search_documents", "read_document_excerpt":
+		case "lookup_metadata", "search_documents", "read_document_excerpts":
 		default:
 			t.Fatalf("unexpected tool %s", tool.Name)
 		}
@@ -123,7 +128,12 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) != 1 || entries[0].Name() != runtimeLockName {
-		t.Fatal("runtime data survived cleanup")
+	for _, entry := range entries {
+		if entry.Name() != runtimeLockName && entry.Name() != pkgCacheName {
+			t.Fatal("runtime data survived cleanup", entry.Name())
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }

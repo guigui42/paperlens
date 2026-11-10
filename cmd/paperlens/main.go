@@ -51,7 +51,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	agent := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Model: c.Model, Root: c.RuntimeDir}
+	agent := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Model: c.Model, Effort: c.ReasoningEffort, Root: c.RuntimeDir}
 	if err := agent.Prepare(); err != nil {
 		return err
 	}
@@ -60,6 +60,13 @@ func run() error {
 			slog.Error("runtime ownership release failed")
 		}
 	}()
+	if c.AI && !c.Demo {
+		warm, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		if err := agent.Warm(warm); err != nil {
+			slog.Warn("copilot package cache warm-up failed; searches will unpack the CLI themselves")
+		}
+		cancel()
+	}
 	var api paperless.API
 	if c.Demo {
 		d := demo.New()

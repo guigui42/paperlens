@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/guigui42/paperlens/internal/paperless"
@@ -45,11 +46,21 @@ type Ranking struct {
 	Results []Pick `json:"results"`
 }
 
+// Seed is the original-query context supplied with the first model turn.
+// Excerpts were read through Excerpt, so they count toward the budget and
+// remain valid quote sources.
+type Seed struct {
+	Candidates []Candidate `json:"candidates"`
+	Excerpts   []Evidence  `json:"excerpts"`
+}
+
 // Tools exposes app-owned functions, not arbitrary archive access.
 type Tools interface {
 	Lookup() paperless.Vocabulary
 	Search(context.Context, string) ([]Candidate, error)
 	Excerpt(context.Context, int) (Evidence, error)
+	Seed() Seed
+	Limits() Limits
 }
 
 // Agent runs one disposable search session.
@@ -96,14 +107,31 @@ type job struct {
 	limited   bool
 	stage     func(string)
 	queries   map[string]bool
+	reserve   int
+	seed      Seed
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
-func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, keyword bool, stage func(string)) (Output, error) {
+func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, keyword bool, stage func(string)) (out Output, err error) {
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 500 {
 		return Output{}, errors.New("enter a query of 1 to 500 characters")
 	}
+	// Timings and counts only: never log query text, titles or OCR.
+	start, mark := time.Now(), time.Now()
+	var metadataTime, paperlessTime, prefetchTime, agentTime time.Duration
+	var j *job
+	defer func() {
+		attrs := []any{"mode", out.Mode, "failed", err != nil, "metadata_ms", metadataTime.Milliseconds(), "paperless_ms", paperlessTime.Milliseconds(),
+			"prefetch_ms", prefetchTime.Milliseconds(), "agent_ms", agentTime.Milliseconds(), "total_ms", time.Since(start).Milliseconds(), "results", len(out.Results)}
+		if j != nil {
+			j.mu.Lock()
+			attrs = append(attrs, "search_calls", j.calls, "candidates", len(j.docs), "excerpts", len(j.evidence), "prefetched", len(j.seed.Excerpts))
+			j.mu.Unlock()
+		}
+		slog.Info("search timing", attrs...)
+	}()
 	v, err := e.API.Metadata(ctx)
+	metadataTime = time.Since(mark)
 	if err != nil {
 		return Output{}, err
 	}
@@ -111,17 +139,26 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		return Output{}, err
 	}
 	excluded, policyErr := e.exclusionIDs(v)
-	j := &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
+	useAI := !keyword && e.Agent != nil && policyErr == nil
+	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
+	if useAI && e.Limits.Searches > 1 {
+		// Keep room for model expansions so a broad original query cannot
+		// occupy every candidate slot before they run.
+		j.reserve = e.Limits.Candidates / 4
+	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
 	}
 	if stage != nil {
 		stage("Searching Paperless")
 	}
-	if _, err = j.Search(ctx, query); err != nil {
+	mark = time.Now()
+	_, err = j.Search(ctx, query)
+	paperlessTime = time.Since(mark)
+	if err != nil {
 		return Output{}, err
 	}
-	out := Output{Mode: "Keyword search", Vocabulary: v}
+	out = Output{Mode: "Keyword search", Vocabulary: v}
 	if keyword || e.Agent == nil {
 		out.Results = j.fallback(query)
 		out.Notice = "Ordinary Paperless keyword results. No document text was sent to AI."
@@ -134,7 +171,12 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		if stage != nil {
 			stage("Finding and checking evidence")
 		}
+		mark = time.Now()
+		j.prefetch(ctx, query)
+		prefetchTime = time.Since(mark)
+		mark = time.Now()
 		rank, agentErr := e.Agent.Rank(ctx, query, j)
+		agentTime = time.Since(mark)
 		if ctx.Err() != nil {
 			return Output{}, ctx.Err()
 		}
@@ -215,8 +257,12 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		j.limited = true
 		return nil, errors.New("search call budget exhausted")
 	}
+	capacity := j.limits.Candidates
+	if j.calls == 0 {
+		capacity = max(1, capacity-j.reserve)
+	}
 	j.calls++
-	p, err := j.api.Search(ctx, query, j.filters, j.limits.Candidates)
+	p, err := j.api.Search(ctx, query, j.filters, capacity)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +279,7 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 			continue
 		}
 		seen[d.ID] = true
-		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= j.limits.Candidates {
+		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= capacity {
 			j.limited = true
 			continue
 		}
@@ -260,6 +306,40 @@ func (j *job) candidates() []Candidate {
 	})
 	return result
 }
+
+// Seed returns the prefetched original-query context.
+func (j *job) Seed() Seed {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return Seed{Candidates: append([]Candidate{}, j.seed.Candidates...), Excerpts: append([]Evidence{}, j.seed.Excerpts...)}
+}
+
+// Limits reports the job budgets for tool descriptions.
+func (j *job) Limits() Limits { return j.limits }
+
+// prefetch reads the likeliest original-query excerpts before the first model
+// turn, always leaving at least two reads for the model's own choices.
+func (j *job) prefetch(ctx context.Context, query string) {
+	j.mu.Lock()
+	cs := j.candidates()
+	ordered := append([]Candidate{}, cs...)
+	scores := map[int]int{}
+	for _, c := range ordered {
+		scores[c.ID] = TitleScore(query, j.docs[c.ID])
+	}
+	j.mu.Unlock()
+	sort.SliceStable(ordered, func(a, b int) bool { return scores[ordered[a].ID] > scores[ordered[b].ID] })
+	excerpts := []Evidence{}
+	for _, c := range ordered[:max(0, min(len(ordered), 3, j.limits.Excerpts-2))] {
+		if ev, err := j.Excerpt(ctx, c.ID); err == nil {
+			excerpts = append(excerpts, ev)
+		}
+	}
+	j.mu.Lock()
+	j.seed = Seed{Candidates: cs, Excerpts: excerpts}
+	j.mu.Unlock()
+}
+
 func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()

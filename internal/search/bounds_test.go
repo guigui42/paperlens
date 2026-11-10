@@ -67,3 +67,52 @@ func TestOCRWindowMapsExpandedAccentsToSource(t *testing.T) {
 		t.Fatal("expanded normalization hid the evidence")
 	}
 }
+
+type reserveAPI struct {
+	pageAPI
+	limits []int
+}
+
+func (a *reserveAPI) Metadata(context.Context) (paperless.Vocabulary, error) {
+	return paperless.Vocabulary{Tags: []paperless.Term{{ID: 9, Name: "Export financier"}}}, nil
+}
+func (a *reserveAPI) Search(ctx context.Context, q string, f paperless.Filters, limit int) (paperless.Page, error) {
+	a.limits = append(a.limits, limit)
+	p, err := a.pageAPI.Search(ctx, q, f, limit)
+	p.Results = p.Results[:min(limit, len(p.Results))]
+	return p, err
+}
+
+type agentFunc func(context.Context, string, Tools) (Ranking, error)
+
+func (f agentFunc) Rank(c context.Context, q string, t Tools) (Ranking, error) { return f(c, q, t) }
+
+func TestOriginalQueryLeavesRoomForExpansions(t *testing.T) {
+	broad := paperless.Page{}
+	for id := 1; id <= 40; id++ {
+		broad.Results = append(broad.Results, paperless.Document{ID: id, Title: "broad"})
+	}
+	expansion := paperless.Page{Results: []paperless.Document{{ID: 99, Title: "answer"}}}
+	api := &reserveAPI{pageAPI: pageAPI{pages: []paperless.Page{broad, expansion}}}
+	reached := false
+	agent := agentFunc(func(ctx context.Context, _ string, tools Tools) (Ranking, error) {
+		cs, err := tools.Search(ctx, "expansion")
+		for _, c := range cs {
+			reached = reached || c.ID == 99
+		}
+		return Ranking{Results: []Pick{}}, err
+	})
+	e := &Engine{API: api, Agent: agent, Limits: Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500}}
+	if _, err := e.Run(context.Background(), "broad", paperless.Filters{}, false, nil); err != nil || !reached {
+		t.Fatal("expansion-only answer was crowded out", api.limits, err)
+	}
+	if api.limits[0] != 30 || api.limits[1] != 40 {
+		t.Fatal("original query did not reserve expansion slots", api.limits)
+	}
+
+	api = &reserveAPI{pageAPI: pageAPI{pages: []paperless.Page{broad}}}
+	out, err := (&Engine{API: api, Limits: e.Limits}).Run(context.Background(), "broad", paperless.Filters{}, true, nil)
+	if err != nil || out.Candidates != 40 {
+		t.Fatal("keyword search lost candidates to an unused reserve", out.Candidates, err)
+	}
+}

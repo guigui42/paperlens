@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -114,6 +115,7 @@ func (j *jobs) worker() {
 		case <-j.ctx.Done():
 			return
 		case item := <-j.queue:
+			picked := time.Now()
 			out, err := j.engine.Run(item.ctx, item.Query, item.Filters, item.keyword, func(stage string) {
 				j.mu.Lock()
 				defer j.mu.Unlock()
@@ -138,6 +140,7 @@ func (j *jobs) worker() {
 			item.cancel()
 			item.finished = true
 			j.inFlight--
+			slog.Info("search job finished", "state", item.State, "queue_ms", picked.Sub(item.Created).Milliseconds(), "run_ms", time.Since(picked).Milliseconds())
 			j.mu.Unlock()
 		}
 	}

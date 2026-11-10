@@ -78,7 +78,7 @@ Change only `PAPERLENS_IMAGE` to the new release digest, pull, then redeploy the
 Stack. Preserve the data volume and credentials. To roll back, restore the prior
 image digest and redeploy. Do not delete the data volume as an update step.
 
-The default release environment uses `gpt-6.1-sol`; model availability is checked
+The default release environment uses `gpt-6-luna` at `low` reasoning effort; model availability is checked
 for the configured server identity before inference. Uploads remain disabled
 until `PAPERLENS_UPLOAD_TYPES` is explicitly set after verifying parser support.
 
