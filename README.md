@@ -38,9 +38,10 @@ Demo uploads are in memory and disappear when the process restarts.
 - Submitted-query search with staged progress, cancellation, bounded queues,
   explicit keyword-only mode and labelled AI fallback.
 - Each search has a reloadable URL (`/?q=…&mode=ai|keyword` plus any
-  filters). Opening or reloading it, or using Back/Forward, reruns the search
-  through the normal CSRF-protected POST; a plain GET never starts a job.
-  Invalid links show the restored form with an error instead of running.
+  filters). Opening or reloading it reruns the search through the normal
+  CSRF-protected POST; a plain GET never starts a job. Back/Forward restores
+  the search form without rerunning it, so it does not start another billable
+  AI search. Invalid links show the restored form with an error instead of running.
 - A "Recent searches" list keeps the last 10 distinct searches privately in
   this browser's `localStorage` (never on the server), newest first, with a
   Clear history button. Reopening one runs it again and can use AI credits again.

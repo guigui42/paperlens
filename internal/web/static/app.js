@@ -175,7 +175,7 @@ document.addEventListener("htmx:after:request", event => {
   const MAX_ITEMS = 10;
   const PARAMS = ["after", "before", "correspondent", "field", "mode", "q", "tag", "type", "value"];
   const STATUSES = ["pending", "none", "complete", "partial", "unavailable"];
-  let replaceNext = false;
+  let replaceURL = null;
   let shownSearch = window.location.pathname + window.location.search;
 
   // Browser storage is untrusted: only rebuild same-origin home URLs from known parameters.
@@ -325,12 +325,13 @@ document.addEventListener("htmx:after:request", event => {
     };
     if (results.dataset.searchAccepted === "true") {
       const target = withPresentation(url);
-      if (replaceNext) {
+      const replace = replaceURL === url;
+      replaceURL = null;
+      if (replace) {
         history.replaceState(null, "", target);
       } else if (window.location.pathname + window.location.search !== target) {
         history.pushState(null, "", target);
       }
-      replaceNext = false;
       shownSearch = window.location.pathname + window.location.search;
       const panel = document.querySelector("[data-recent]");
       if (panel) panel.open = false;
@@ -355,22 +356,31 @@ document.addEventListener("htmx:after:request", event => {
     render([], ok);
   });
 
-  // Back/Forward restores another search URL; reloading reruns it once.
+  // Back/Forward restores the form without unexpectedly starting a new run.
   window.addEventListener("popstate", () => {
     const current = window.location.pathname + window.location.search;
-    if (window.location.pathname === "/" && current !== shownSearch) window.location.reload();
+    if (window.location.pathname === "/" && current !== shownSearch) {
+      history.replaceState({ suppressAutorun: true }, "", current);
+      window.location.reload();
+    }
   });
 
   document.addEventListener("DOMContentLoaded", () => {
     const state = load();
     render(state.items, state.ok);
+    const restored = history.state?.suppressAutorun === true;
+    if (restored) {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      const notice = document.querySelector("[data-history-restored]");
+      if (notice) notice.hidden = false;
+    }
     const form = document.getElementById("search-form");
-    if (form?.hasAttribute("data-autorun")) {
+    if (!restored && form?.hasAttribute("data-autorun")) {
       const panel = document.querySelector("[data-recent]");
       if (panel) panel.open = false;
       // Let HTMX finish initializing so the rerun uses the same POST flow.
       setTimeout(() => {
-        replaceNext = true;
+        replaceURL = normalizeURL(window.location.pathname + window.location.search);
         form.requestSubmit();
       });
     }

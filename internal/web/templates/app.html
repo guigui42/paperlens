@@ -29,6 +29,7 @@
 <label>Exact custom value<input name="value" list="custom-options" maxlength="200" value="{{.Filters.Value}}" placeholder="Text, number, true/false or YYYY-MM-DD"><datalist id="custom-options">{{range .Vocab.Fields}}{{$field:=.Name}}{{range .ExtraData.Options}}<option value="{{.ID}}">{{$field}}: {{.Label}}</option>{{end}}{{end}}</datalist></label><p class="filter-note">Date filters use the document's issue date, not a year mentioned in its text. Filters are never relaxed.</p>
 </div></details><label class="mode"><input type="checkbox" name="mode" value="keyword" {{if .Keyword}}checked{{end}}>Keyword only</label></div>
 </form>
+<p class="notice" data-history-restored hidden>Search restored from browser history. Submit the form to run it again.</p>
 <details class="recent" data-recent hidden open><summary>Recent searches</summary>
 <p class="recent-empty" data-recent-empty>No recent searches yet. Searches you run here are kept privately in this browser.</p>
 <ol class="recent-list" data-recent-list></ol>

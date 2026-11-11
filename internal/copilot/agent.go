@@ -380,6 +380,7 @@ func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking s
 			st.inputTokens += value(d.InputTokens)
 			st.outputTokens += value(d.OutputTokens)
 			st.reasoning += value(d.ReasoningTokens)
+			meter.Inference()
 			recordUsage(meter, d)
 		case *sdk.ToolExecutionStartData:
 			st.toolCalls++
@@ -387,7 +388,6 @@ func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking s
 	})
 	defer unsubscribe()
 	mark = time.Now()
-	meter.Inference()
 	reply, err := session.SendAndWait(ctx, sdk.MessageOptions{Prompt: prompt})
 	st.mu.Lock()
 	st.inference = time.Since(mark)
@@ -396,6 +396,7 @@ func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking s
 		a.forgetModel()
 		return ranking, search.ErrAIInference
 	}
+	meter.Inference()
 	if reply == nil {
 		return ranking, errors.New("copilot returned no ranking")
 	}

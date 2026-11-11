@@ -48,6 +48,16 @@ func TestInvalidSearchURLDoesNotAutorun(t *testing.T) {
 	}
 }
 
+func TestUnavailableAIPolicyDoesNotAutorunAIURL(t *testing.T) {
+	h := newHarness(t)
+	h.app.config.AI = true
+	h.app.jobs.engine.ExcludedTags = []string{"Missing required privacy tag"}
+	_, body := h.request(t, "GET", "/?q=home+insurance&mode=ai", "", "")
+	if strings.Contains(body, "data-autorun") || !strings.Contains(body, `name="mode" value="keyword" checked`) {
+		t.Fatal("URL autoran AI despite the unavailable exclusion policy")
+	}
+}
+
 func TestSearchResultsExposeURLAndCredits(t *testing.T) {
 	h := newHarness(t)
 	_, home := h.request(t, "GET", "/", "", "")

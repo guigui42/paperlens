@@ -145,11 +145,13 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.base(w, r)
 	v, err := s.api.Metadata(r.Context())
+	policyUnavailable := false
 	if err != nil {
 		p.Error = err.Error()
 	} else {
 		p.Vocab = v
 		if p.AI && s.jobs.engine.ValidatePolicy(v) != nil {
+			policyUnavailable = true
 			p.AI = false
 			p.Keyword = true
 			p.Error = search.ErrExclusionPolicy.Error()
@@ -159,7 +161,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	// the CSRF-protected POST so GET never starts billable work.
 	if q := r.URL.Query(); q.Has("q") {
 		p.Query = strings.TrimSpace(q.Get("q"))
-		p.Keyword = parseMode(q.Get("mode"), p.Keyword)
+		p.Keyword = parseMode(q.Get("mode"), p.Keyword) || policyUnavailable
 		f, ferr := parseFilters(r)
 		if ferr == nil && err == nil {
 			ferr = f.Validate(v)
@@ -172,7 +174,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			p.Filters = f
 		default:
 			p.Filters = f
-			p.Autorun = err == nil
+			p.Autorun = err == nil && (!policyUnavailable || q.Get("mode") == "keyword")
 		}
 	}
 	s.render(w, "home", p)

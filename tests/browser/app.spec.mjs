@@ -403,7 +403,9 @@ test("search URLs reload, history and recent searches", async ({ page, context }
   await page.goBack();
   await expect(page).toHaveURL("/?mode=keyword&q=electricity+bill");
   await expect(page.getByLabel("Search your documents")).toHaveValue("electricity bill");
-  await expect(page.locator(".result-card").first()).toContainText("Electricity");
+  await expect(page.locator("[data-history-restored]")).toBeVisible();
+  await expect(page.locator(".result-card")).toHaveCount(0);
+  expect(posts).toHaveLength(3);
 
   posts.length = 0;
   await page.reload();
@@ -429,6 +431,32 @@ test("search URLs reload, history and recent searches", async ({ page, context }
   await expect(other.locator("[data-recent]")).toContainText("No recent searches yet.");
   expect(await other.evaluate(() => localStorage.getItem("paperlens.recentSearches.v1"))).toBeNull();
   await other.close();
+});
+
+test("failed URL autorun does not replace the next successful history entry", async ({ page }) => {
+  let first = true;
+  const posts = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/search") posts.push(request);
+  });
+  await page.route("**/search", async route => {
+    if (first) {
+      first = false;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/?mode=keyword&q=home+insurance");
+  await expect.poll(() => posts.length).toBe(1);
+  await page.getByLabel("Search your documents").fill("electricity bill");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL("/?mode=keyword&q=electricity+bill");
+  await expect(page.locator("[data-credits-label]")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL("/?mode=keyword&q=home+insurance");
+  await expect(page.locator("[data-history-restored]")).toBeVisible();
+  expect(posts).toHaveLength(2);
 });
 
 test("invalid search links do not run", async ({ page }) => {
