@@ -9,7 +9,8 @@ services:
       PAPERLESS_URL: ${PAPERLESS_URL:?Set the Paperless HTTP(S) origin without /api/}
       PAPERLESS_TOKEN_FILE: /run/secrets/paperless_token
       COPILOT_GITHUB_TOKEN_FILE: /run/secrets/copilot_token
-      COPILOT_MODEL: ${COPILOT_MODEL:-gpt-6.1-sol}
+      COPILOT_MODEL: ${COPILOT_MODEL:-gpt-6-luna}
+      COPILOT_REASONING_EFFORT: ${COPILOT_REASONING_EFFORT:-low}
       PAPERLENS_EXCLUDED_TAGS: ${PAPERLENS_EXCLUDED_TAGS:-Export financier}
       PAPERLENS_AI: ${PAPERLENS_AI:-true}
       PAPERLENS_UPLOAD_TYPES: ${PAPERLENS_UPLOAD_TYPES:-}

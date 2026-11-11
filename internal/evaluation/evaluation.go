@@ -52,10 +52,17 @@ func (FakeAgent) Rank(ctx context.Context, q string, t search.Tools) (search.Ran
 	}
 	var eligible []evidenceCandidate
 	words := strings.FieldsFunc(search.Fold(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
-	for _, c := range candidates[:min(12, len(candidates))] {
+	// Prefetched excerpts are free to reread, so evaluate them first and then
+	// spend the remaining budget on other candidates, like a model would.
+	seeded := map[int]bool{}
+	for _, ev := range t.Seed().Excerpts {
+		seeded[ev.ID] = true
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return seeded[candidates[i].ID] && !seeded[candidates[j].ID] })
+	for _, c := range candidates[:min(t.Limits().Excerpts, len(candidates))] {
 		ev, err := t.Excerpt(ctx, c.ID)
 		if err != nil {
-			return search.Ranking{}, err
+			break
 		}
 		matched, total := 0, 0
 		for _, word := range words {
@@ -94,11 +101,13 @@ func (FakeAgent) Rank(ctx context.Context, q string, t search.Tools) (search.Ran
 	return out, nil
 }
 
+// DefaultLimits mirrors the built-in configuration defaults.
+var DefaultLimits = search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500}
+
 // Run compares the original lexical fixture rank with the full bounded pipeline.
-func Run(ctx context.Context, agent search.Agent, kind string) (Report, error) {
+func Run(ctx context.Context, agent search.Agent, kind string, limits search.Limits) (Report, error) {
 	start := time.Now()
 	api := demo.New()
-	limits := search.Limits{Searches: 6, Candidates: 100, Excerpts: 12, Characters: 8000}
 	e := search.Engine{API: api, Agent: agent, Limits: limits}
 	report := Report{Kind: kind, Limits: limits}
 	cases, err := Cases()

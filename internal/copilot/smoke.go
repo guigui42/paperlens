@@ -16,6 +16,10 @@ import (
 
 type smokeTools struct{}
 
+func (smokeTools) Seed() search.Seed { return search.Seed{} }
+func (smokeTools) Limits() search.Limits {
+	return search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500}
+}
 func (smokeTools) Lookup() paperless.Vocabulary { return paperless.Vocabulary{} }
 func (smokeTools) Search(context.Context, string) ([]search.Candidate, error) {
 	return []search.Candidate{}, nil

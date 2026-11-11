@@ -15,7 +15,7 @@ import (
 // Config contains validated configuration. Secrets must never be logged.
 type Config struct {
 	Listen, Origin, PaperlessURL, PaperlessToken, CopilotToken string
-	Model, CLIPath, StateDir, RuntimeDir                       string
+	Model, ReasoningEffort, CLIPath, StateDir, RuntimeDir      string
 	Demo, AI, LANOnly                                          bool
 	MaxUpload                                                  int64
 	MaxSearches, MaxCandidates, MaxExcerpts, ExcerptChars      int
@@ -31,7 +31,7 @@ func Load() (Config, error) {
 		Listen:       env("PAPERLENS_LISTEN", "127.0.0.1:8080"),
 		Origin:       env("PAPERLENS_ORIGIN", "http://localhost:8080"),
 		PaperlessURL: strings.TrimRight(os.Getenv("PAPERLESS_URL"), "/"),
-		Model:        env("COPILOT_MODEL", "gpt-5.4"), CLIPath: os.Getenv("COPILOT_CLI_PATH"),
+		Model:        env("COPILOT_MODEL", "gpt-6-luna"), CLIPath: os.Getenv("COPILOT_CLI_PATH"),
 		StateDir: env("PAPERLENS_STATE_DIR", ".state"), RuntimeDir: env("PAPERLENS_RUNTIME_DIR", ""),
 		Demo: os.Getenv("PAPERLENS_DEMO") == "true", AI: os.Getenv("PAPERLENS_AI") != "false",
 		LANOnly: os.Getenv("PAPERLENS_LAN_ONLY") == "true",
@@ -49,9 +49,9 @@ func Load() (Config, error) {
 		def, min, max int
 	}{
 		{"PAPERLENS_MAX_SEARCHES", &c.MaxSearches, 6, 1, 6},
-		{"PAPERLENS_MAX_CANDIDATES", &c.MaxCandidates, 100, 1, 100},
-		{"PAPERLENS_MAX_EXCERPTS", &c.MaxExcerpts, 12, 1, 12},
-		{"PAPERLENS_EXCERPT_CHARS", &c.ExcerptChars, 8000, 100, 8000},
+		{"PAPERLENS_MAX_CANDIDATES", &c.MaxCandidates, 40, 1, 100},
+		{"PAPERLENS_MAX_EXCERPTS", &c.MaxExcerpts, 6, 1, 12},
+		{"PAPERLENS_EXCERPT_CHARS", &c.ExcerptChars, 2500, 100, 8000},
 		{"PAPERLENS_CONCURRENCY", &c.Concurrency, 2, 1, 8},
 		{"PAPERLENS_QUEUE", &c.Queue, 4, 0, 16},
 	}
@@ -61,6 +61,13 @@ func Load() (Config, error) {
 			return c, fmt.Errorf("%s must be between %d and %d", v.name, v.min, v.max)
 		}
 		*v.dst = n
+	}
+	switch effort := env("COPILOT_REASONING_EFFORT", "low"); effort {
+	case "default":
+	case "low", "medium", "high", "xhigh", "max":
+		c.ReasoningEffort = effort
+	default:
+		return c, errors.New("COPILOT_REASONING_EFFORT must be default, low, medium, high, xhigh or max")
 	}
 	c.Deadline, err = time.ParseDuration(env("PAPERLENS_SEARCH_TIMEOUT", "90s"))
 	if err != nil || c.Deadline < time.Second || c.Deadline > 3*time.Minute {

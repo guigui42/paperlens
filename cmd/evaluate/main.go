@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/guigui42/paperlens/internal/config"
 	"github.com/guigui42/paperlens/internal/copilot"
@@ -19,6 +20,7 @@ func main() {
 	flag.Parse()
 	var agent search.Agent = evaluation.FakeAgent{}
 	kind := "fake-agent contract evaluation; not model quality"
+	limits := evaluation.DefaultLimits
 	if *live {
 		c, err := config.Load()
 		if err != nil {
@@ -29,7 +31,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "live evaluation requires PAPERLENS_DEMO=true, COPILOT_GITHUB_TOKEN[_FILE], and absolute COPILOT_CLI_PATH")
 			os.Exit(1)
 		}
-		a := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Root: c.RuntimeDir, Model: c.Model}
+		a := &copilot.Agent{Path: c.CLIPath, Token: c.CopilotToken, Root: c.RuntimeDir, Model: c.Model, Effort: c.ReasoningEffort}
 		if err := a.Prepare(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -39,10 +41,20 @@ func main() {
 				fmt.Fprintln(os.Stderr, "runtime ownership release failed")
 			}
 		}()
+		warm, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if err := a.Warm(warm); err != nil {
+			fmt.Fprintln(os.Stderr, "copilot package cache warm-up failed")
+		}
+		cancel()
 		agent = a
-		kind = "live Copilot model: " + c.Model + "; synthetic archive, not actual Paperless index"
+		limits = search.Limits{Searches: c.MaxSearches, Candidates: c.MaxCandidates, Excerpts: c.MaxExcerpts, Characters: c.ExcerptChars}
+		effort := c.ReasoningEffort
+		if effort == "" {
+			effort = "default"
+		}
+		kind = "live Copilot model: " + c.Model + " (reasoning " + effort + "); synthetic archive, not actual Paperless index"
 	}
-	r, err := evaluation.Run(context.Background(), agent, kind)
+	r, err := evaluation.Run(context.Background(), agent, kind, limits)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if e := enc.Encode(r); e != nil {

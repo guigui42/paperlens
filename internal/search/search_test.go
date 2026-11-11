@@ -172,3 +172,48 @@ func TestCancellationAndInvalidInput(t *testing.T) {
 		t.Fatal("accent folding failed")
 	}
 }
+func TestPrefetchSeed(t *testing.T) {
+	var seed search.Seed
+	agent := agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+		seed = tools.Seed()
+		payload, _ := json.Marshal(seed)
+		if strings.Contains(string(payload), "EXCLUDED_SYNTHETIC_SENTINEL") || strings.Contains(string(payload), "financial export") {
+			t.Fatal("excluded document prefetched")
+		}
+		read := map[int]bool{}
+		for _, ev := range seed.Excerpts {
+			read[ev.ID] = true
+		}
+		// Budget 5 with 3 prefetched leaves exactly two discretionary reads.
+		extra := 0
+		for _, c := range seed.Candidates {
+			if !read[c.ID] {
+				if _, err := tools.Excerpt(ctx, c.ID); err == nil {
+					extra++
+				}
+			}
+		}
+		if extra != 2 {
+			t.Fatal("prefetch did not leave two discretionary reads", extra)
+		}
+		first := seed.Excerpts[0]
+		return search.Ranking{Results: []search.Pick{{ID: first.ID, Quote: strings.SplitN(first.Text, "\n", 2)[0], Strength: "strong"}}}, nil
+	})
+	e := engine(agent)
+	e.Limits.Excerpts = 5
+	out, err := e.Run(context.Background(), "insurance financial export certificate", paperless.Filters{}, false, nil)
+	if err != nil || out.Mode != "Evidence-ranked search" || len(seed.Excerpts) != 3 || seed.Excerpts[0].ID != 1 {
+		t.Fatal("prefetched evidence was not usable", out.Mode, seed.Excerpts, err)
+	}
+
+	e.Limits.Excerpts = 2
+	e.Agent = agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+		if s := tools.Seed(); len(s.Excerpts) != 0 || len(s.Candidates) == 0 {
+			t.Fatal("prefetch consumed the model's minimum reads", s)
+		}
+		return search.Ranking{Results: []search.Pick{}}, nil
+	})
+	if _, err = e.Run(context.Background(), "insurance", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+}

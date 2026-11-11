@@ -118,9 +118,14 @@ subscription through an app is permitted.** See the
 export PAPERLENS_AI=true
 export COPILOT_GITHUB_TOKEN_FILE=/absolute/path/to/copilot_token
 export COPILOT_CLI_PATH=/absolute/path/to/pinned/copilot
-export COPILOT_MODEL=gpt-5.4
+export COPILOT_MODEL=gpt-6-luna
+export COPILOT_REASONING_EFFORT=low   # default; or medium, high, xhigh, max, default
 go run ./cmd/paperlens
 ```
+
+`COPILOT_REASONING_EFFORT` is only sent when the model lists that level;
+otherwise the model default is used and a warning is logged once. `default`
+always leaves the choice to the model.
 
 `COPILOT_GITHUB_TOKEN` is also supported, but cannot be combined with its `_FILE`
 setting. Paperlens does **not** reuse ambient `gh` credentials, your normal
@@ -133,7 +138,7 @@ Copilot home, repository instructions or installed MCP servers.
 | Go SDK | `github.com/github/copilot-sdk/go v1.0.31` |
 | CLI release artifact | `github/copilot-cli v1.0.109`, SHA-256 verified |
 | CLI version in isolated homes | `1.0.109` on macOS and Linux |
-| Default model | `gpt-5.4`, configurable and checked against the identity's model list |
+| Default model | `gpt-6-luna` at `low` reasoning effort, configurable and checked against the identity's model list |
 | HTMX | 4.0.1 |
 | Alpine CSP | 3.17.5 |
 
@@ -162,9 +167,38 @@ local runtime cleanup. It does not validate authentication or model quality.
 
 ## Data flow and limits
 
-The original query is searched in Paperless first. Copilot can then call only
-`lookup_metadata`, `search_documents`, and `read_document_excerpt`. Go enforces
-all hard filters, budgets and exclusions, regardless of model output.
+The original query is searched in Paperless first. Go then reads excerpts for
+up to three of the likeliest eligible candidates (always leaving at least two
+excerpt reads for the model) and sends them, with the original candidates'
+metadata, in the first prompt as JSON data. When that evidence answers the
+query the model replies without any tool call. Otherwise it can call only
+`lookup_metadata`, `search_documents`, and `read_document_excerpts` (several
+IDs per call). Go enforces all hard filters, budgets and exclusions, regardless
+of model output. In AI mode the original query fills at most three quarters of
+the candidate pool, so later expansions can still add new documents.
+
+The CLI unpacks its pinned package (about 240 MB) once into `pkg-cache` inside
+`PAPERLENS_RUNTIME_DIR` (`COPILOT_PKG_CACHE_HOME`), warmed at startup. That
+folder holds only CLI code; each search's home, session and transcript are
+still created fresh and deleted. In Docker the runtime directory is tmpfs, so
+the cache uses about 240 MB of the container's memory for its lifetime
+(previously each concurrent search unpacked its own copy). Anyone who can
+write the runtime directory can alter the cached CLI, so keep it private to
+the Paperlens user, as with the binary itself.
+
+When AI is used, the private runtime starts while the original Paperless query
+runs, so CLI start-up (about 1.6 s) overlaps the request instead of following
+it. A runtime that is never used (Paperless error, cancellation) is still torn
+down with the same fail-closed checks.
+
+The model list is cached for up to 10 minutes per process and cleared on any
+session or inference failure. It is capability metadata only: every search
+still starts a fresh runtime that authenticates with the configured token.
+
+Each search logs stage timings and counts (`search timing`, `copilot timing`,
+`search job finished`): Paperless, prefetch, runtime start, model list,
+session setup, inference, cleanup, queue wait, model calls, tool calls and
+token usage. Query text, titles and OCR are never logged.
 
 By default, documents tagged **`Export financier`** never enter model tool results, prompts
 or transcripts. They remain visible as explicitly labelled, non-AI keyword
@@ -190,9 +224,9 @@ does not guarantee that the model's relevance judgement is correct.
 | Bound | Default / maximum |
 |---|---|
 | Paperless search calls per job | 6 / 6, including the original query |
-| Unique candidates | 100 / 100 |
-| Excerpt-bearing documents | 12 / 12 |
-| Characters per excerpt | 8,000 / 8,000 |
+| Unique candidates | 40 / 100 |
+| Excerpt-bearing documents, including prefetched | 6 / 12 |
+| Characters per excerpt | 2,500 / 8,000 |
 | Search deadline | 90 seconds / 3 minutes |
 | Concurrent searches | 2 / 8 |
 | Additional queued searches | 4 / 16 |

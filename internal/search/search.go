@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/guigui42/paperlens/internal/paperless"
@@ -45,16 +47,47 @@ type Ranking struct {
 	Results []Pick `json:"results"`
 }
 
+// Seed is the original-query context supplied with the first model turn.
+// Excerpts were read through Excerpt, so they count toward the budget and
+// remain valid quote sources.
+type Seed struct {
+	Candidates []Candidate `json:"candidates"`
+	Excerpts   []Evidence  `json:"excerpts"`
+}
+
 // Tools exposes app-owned functions, not arbitrary archive access.
 type Tools interface {
 	Lookup() paperless.Vocabulary
 	Search(context.Context, string) ([]Candidate, error)
 	Excerpt(context.Context, int) (Evidence, error)
+	Seed() Seed
+	Limits() Limits
 }
 
 // Agent runs one disposable search session.
 type Agent interface {
 	Rank(context.Context, string, Tools) (Ranking, error)
+}
+
+// Starter is optionally implemented by an Agent whose per-search runtime can
+// start before retrieval, so start-up overlaps the original Paperless query.
+// The context only bounds start-up. On error Begin returns no Run and has
+// already released anything it started.
+type Starter interface {
+	Begin(context.Context) (Run, error)
+}
+
+// Run is one started per-search runtime. Rank may be called at most once.
+// Close releases the runtime if Rank did not; it is safe to call after Rank
+// and the engine always calls it.
+type Run interface {
+	Rank(context.Context, string, Tools) (Ranking, error)
+	Close() error
+}
+
+type started struct {
+	run Run
+	err error
 }
 
 // Result contains canonical metadata and validated evidence.
@@ -91,19 +124,38 @@ type job struct {
 	limits    Limits
 	docs      map[int]paperless.Document
 	ranks     map[int]float64
-	evidence  map[int]string
+	evidence  map[int][]string
 	calls     int
 	limited   bool
 	stage     func(string)
 	queries   map[string]bool
+	reserve   int
+	seed      Seed
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
-func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, keyword bool, stage func(string)) (Output, error) {
+func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, keyword bool, stage func(string)) (out Output, err error) {
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 500 {
 		return Output{}, errors.New("enter a query of 1 to 500 characters")
 	}
+	// Timings and counts only: never log query text, titles or OCR.
+	start, mark := time.Now(), time.Now()
+	var metadataTime, paperlessTime, prefetchTime, agentTime, startWaitTime time.Duration
+	var j *job
+	var overlap bool
+	defer func() {
+		attrs := []any{"mode", out.Mode, "failed", err != nil, "metadata_ms", metadataTime.Milliseconds(), "paperless_ms", paperlessTime.Milliseconds(),
+			"prefetch_ms", prefetchTime.Milliseconds(), "agent_ms", agentTime.Milliseconds(), "overlap", overlap, "start_wait_ms", startWaitTime.Milliseconds(),
+			"total_ms", time.Since(start).Milliseconds(), "results", len(out.Results)}
+		if j != nil {
+			j.mu.Lock()
+			attrs = append(attrs, "search_calls", j.calls, "candidates", len(j.docs), "excerpts", len(j.evidence), "prefetched", len(j.seed.Excerpts))
+			j.mu.Unlock()
+		}
+		slog.Info("search timing", attrs...)
+	}()
 	v, err := e.API.Metadata(ctx)
+	metadataTime = time.Since(mark)
 	if err != nil {
 		return Output{}, err
 	}
@@ -111,17 +163,48 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		return Output{}, err
 	}
 	excluded, policyErr := e.exclusionIDs(v)
-	j := &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
+	useAI := !keyword && e.Agent != nil && policyErr == nil
+	var begun chan started
+	if starter, ok := e.Agent.(Starter); ok && useAI {
+		overlap = true
+		begun = make(chan started, 1)
+		go func() {
+			run, beginErr := starter.Begin(ctx)
+			begun <- started{run, beginErr}
+		}()
+		// Every exit releases the runtime: an unconsumed start is awaited and
+		// closed so no CLI process or state directory outlives Run. A failed
+		// Paperless query does not interrupt start-up; ctx still bounds it.
+		defer func() {
+			if begun == nil {
+				return
+			}
+			if b := <-begun; b.err == nil && b.run != nil {
+				if closeErr := b.run.Close(); closeErr != nil {
+					slog.Warn("unused AI runtime cleanup failed")
+				}
+			}
+		}()
+	}
+	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]bool{}}
+	if useAI && e.Limits.Searches > 1 {
+		// Keep room for model expansions so a broad original query cannot
+		// occupy every candidate slot before they run.
+		j.reserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
 	}
 	if stage != nil {
 		stage("Searching Paperless")
 	}
-	if _, err = j.Search(ctx, query); err != nil {
+	mark = time.Now()
+	_, err = j.Search(ctx, query)
+	paperlessTime = time.Since(mark)
+	if err != nil {
 		return Output{}, err
 	}
-	out := Output{Mode: "Keyword search", Vocabulary: v}
+	out = Output{Mode: "Keyword search", Vocabulary: v}
 	if keyword || e.Agent == nil {
 		out.Results = j.fallback(query)
 		out.Notice = "Ordinary Paperless keyword results. No document text was sent to AI."
@@ -134,7 +217,31 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		if stage != nil {
 			stage("Finding and checking evidence")
 		}
-		rank, agentErr := e.Agent.Rank(ctx, query, j)
+		mark = time.Now()
+		j.prefetch(ctx, query)
+		prefetchTime = time.Since(mark)
+		mark = time.Now()
+		var rank Ranking
+		var agentErr error
+		if begun != nil {
+			b := <-begun
+			begun = nil
+			startWaitTime = time.Since(mark)
+			switch {
+			case b.err != nil:
+				agentErr = b.err
+			case b.run == nil:
+				agentErr = ErrAIRuntime
+			default:
+				rank, agentErr = b.run.Rank(ctx, query, j)
+				if closeErr := b.run.Close(); closeErr != nil {
+					agentErr = closeErr
+				}
+			}
+		} else {
+			rank, agentErr = e.Agent.Rank(ctx, query, j)
+		}
+		agentTime = time.Since(mark)
 		if ctx.Err() != nil {
 			return Output{}, ctx.Err()
 		}
@@ -215,8 +322,12 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		j.limited = true
 		return nil, errors.New("search call budget exhausted")
 	}
+	capacity := j.limits.Candidates
+	if j.calls == 0 {
+		capacity = max(1, capacity-j.reserve)
+	}
 	j.calls++
-	p, err := j.api.Search(ctx, query, j.filters, j.limits.Candidates)
+	p, err := j.api.Search(ctx, query, j.filters, capacity)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +344,7 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 			continue
 		}
 		seen[d.ID] = true
-		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= j.limits.Candidates {
+		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= capacity {
 			j.limited = true
 			continue
 		}
@@ -260,6 +371,40 @@ func (j *job) candidates() []Candidate {
 	})
 	return result
 }
+
+// Seed returns the prefetched original-query context.
+func (j *job) Seed() Seed {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return Seed{Candidates: append([]Candidate{}, j.seed.Candidates...), Excerpts: append([]Evidence{}, j.seed.Excerpts...)}
+}
+
+// Limits reports the job budgets for tool descriptions.
+func (j *job) Limits() Limits { return j.limits }
+
+// prefetch reads the likeliest original-query excerpts before the first model
+// turn, always leaving at least two reads for the model's own choices.
+func (j *job) prefetch(ctx context.Context, query string) {
+	j.mu.Lock()
+	cs := j.candidates()
+	ordered := append([]Candidate{}, cs...)
+	scores := map[int]int{}
+	for _, c := range ordered {
+		scores[c.ID] = TitleScore(query, j.docs[c.ID])
+	}
+	j.mu.Unlock()
+	sort.SliceStable(ordered, func(a, b int) bool { return scores[ordered[a].ID] > scores[ordered[b].ID] })
+	excerpts := []Evidence{}
+	for _, c := range ordered[:max(0, min(len(ordered), 3, j.limits.Excerpts-2))] {
+		if ev, err := j.Excerpt(ctx, c.ID); err == nil {
+			excerpts = append(excerpts, ev)
+		}
+	}
+	j.mu.Lock()
+	j.seed = Seed{Candidates: cs, Excerpts: excerpts}
+	j.mu.Unlock()
+}
+
 func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -270,17 +415,19 @@ func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	if !ok || j.isExcluded(d) {
 		return Evidence{}, errors.New("document is not an eligible retrieved candidate")
 	}
-	if text, ok := j.evidence[id]; ok {
-		return Evidence{id, text}, nil
-	}
-	if len(j.evidence) >= j.limits.Excerpts {
-		j.limited = true
-		return Evidence{}, errors.New("excerpt budget exhausted")
-	}
 	// OCR was retrieved in the bounded search response. A fresh unfiltered read
 	// could race a tag/filter change and bypass the policy snapshot.
 	text := clip(d.Title+"\n"+filename(d)+"\n"+d.Content, j.limits.Characters)
-	j.evidence[id] = text
+	read := j.evidence[id]
+	if len(read) == 0 && len(j.evidence) >= j.limits.Excerpts {
+		j.limited = true
+		return Evidence{}, errors.New("excerpt budget exhausted")
+	}
+	// A later expansion may centre the window elsewhere. The document is
+	// already charged, and earlier windows stay valid quote sources.
+	if !slices.Contains(read, text) {
+		j.evidence[id] = append(read, text)
+	}
 	return Evidence{id, text}, nil
 }
 func (j *job) validate(r Ranking) ([]Result, error) {
@@ -291,8 +438,8 @@ func (j *job) validate(r Ranking) ([]Result, error) {
 	seen := map[int]bool{}
 	for _, p := range r.Results {
 		d, ok := j.docs[p.ID]
-		text, read := j.evidence[p.ID]
-		if !ok || !read || j.isExcluded(d) || seen[p.ID] || !j.filters.Matches(d) || strings.TrimSpace(p.Quote) == "" || len([]rune(p.Quote)) > 500 || !strings.Contains(text, p.Quote) || (p.Strength != "strong" && p.Strength != "weak") {
+		grounded := slices.ContainsFunc(j.evidence[p.ID], func(text string) bool { return strings.Contains(text, p.Quote) })
+		if !ok || !grounded || j.isExcluded(d) || seen[p.ID] || !j.filters.Matches(d) || strings.TrimSpace(p.Quote) == "" || len([]rune(p.Quote)) > 500 || (p.Strength != "strong" && p.Strength != "weak") {
 			return nil, errors.New("invalid or ungrounded model evidence")
 		}
 		seen[p.ID] = true

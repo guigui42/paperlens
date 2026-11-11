@@ -8,7 +8,7 @@ import (
 
 func defaults(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"PAPERLESS_URL", "PAPERLESS_TOKEN", "PAPERLESS_TOKEN_FILE", "COPILOT_GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN_FILE", "COPILOT_CLI_PATH", "PAPERLENS_DEMO", "PAPERLENS_AI", "PAPERLENS_LAN_ONLY", "PAPERLENS_ORIGIN", "PAPERLENS_UPLOAD_TYPES", "PAPERLENS_SEARCH_TIMEOUT", "PAPERLENS_MAX_UPLOAD_MB", "PAPERLENS_MAX_SEARCHES", "PAPERLENS_MAX_CANDIDATES", "PAPERLENS_MAX_EXCERPTS", "PAPERLENS_EXCERPT_CHARS", "PAPERLENS_CONCURRENCY", "PAPERLENS_QUEUE"} {
+	for _, key := range []string{"PAPERLESS_URL", "PAPERLESS_TOKEN", "PAPERLESS_TOKEN_FILE", "COPILOT_GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN_FILE", "COPILOT_CLI_PATH", "PAPERLENS_DEMO", "PAPERLENS_AI", "PAPERLENS_LAN_ONLY", "PAPERLENS_ORIGIN", "PAPERLENS_UPLOAD_TYPES", "PAPERLENS_SEARCH_TIMEOUT", "PAPERLENS_MAX_UPLOAD_MB", "PAPERLENS_MAX_SEARCHES", "PAPERLENS_MAX_CANDIDATES", "PAPERLENS_MAX_EXCERPTS", "PAPERLENS_EXCERPT_CHARS", "PAPERLENS_CONCURRENCY", "PAPERLENS_QUEUE", "COPILOT_REASONING_EFFORT"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("PAPERLENS_STATE_DIR", t.TempDir())
@@ -43,7 +43,7 @@ func TestConfigGuards(t *testing.T) {
 	}
 }
 func TestDemoAndValidation(t *testing.T) {
-	for _, tc := range []struct{ key, val string }{{"PAPERLENS_ORIGIN", "http://user:pass@example.com"}, {"PAPERLENS_MAX_SEARCHES", "99"}, {"PAPERLENS_MAX_UPLOAD_MB", "0"}, {"PAPERLENS_SEARCH_TIMEOUT", "1h"}} {
+	for _, tc := range []struct{ key, val string }{{"PAPERLENS_ORIGIN", "http://user:pass@example.com"}, {"PAPERLENS_MAX_SEARCHES", "99"}, {"PAPERLENS_MAX_UPLOAD_MB", "0"}, {"PAPERLENS_SEARCH_TIMEOUT", "1h"}, {"COPILOT_REASONING_EFFORT", "extreme"}} {
 		t.Run(tc.key, func(t *testing.T) {
 			defaults(t)
 			t.Setenv("PAPERLENS_DEMO", "true")
@@ -82,5 +82,16 @@ func TestSecretFiles(t *testing.T) {
 	t.Setenv("PAPERLESS_TOKEN_FILE", file+"-missing")
 	if _, err = secret("PAPERLESS_TOKEN"); err == nil {
 		t.Fatal("missing token accepted")
+	}
+}
+
+func TestReasoningEffort(t *testing.T) {
+	defaults(t)
+	t.Setenv("PAPERLENS_DEMO", "true")
+	for value, want := range map[string]string{"": "low", "default": "", "high": "high"} {
+		t.Setenv("COPILOT_REASONING_EFFORT", value)
+		if c, err := Load(); err != nil || c.ReasoningEffort != want {
+			t.Fatal(value, c.ReasoningEffort, err)
+		}
 	}
 }

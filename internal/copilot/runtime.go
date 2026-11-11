@@ -1,14 +1,21 @@
 package copilot
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 )
 
 const runtimeLockName = ".paperlens-runtime.lock"
+
+// pkgCacheName holds only the CLI's own unpacked, version-pinned package
+// (COPILOT_PKG_CACHE_HOME). Sessions, credentials and transcripts stay in
+// per-search directories that are deleted after every search.
+const pkgCacheName = "pkg-cache"
 
 // Prepare exclusively owns the dedicated runtime root before removing orphan
 // state. It also works without a CLI path for keyword-only startup cleanup.
@@ -37,7 +44,7 @@ func (a *Agent) Prepare() error {
 	entries, err := os.ReadDir(a.Root)
 	if err == nil {
 		for _, entry := range entries {
-			if entry.Name() == runtimeLockName {
+			if entry.Name() == runtimeLockName || (entry.Name() == pkgCacheName && entry.IsDir()) {
 				continue
 			}
 			if !strings.HasPrefix(entry.Name(), "search-") {
@@ -54,6 +61,23 @@ func (a *Agent) Prepare() error {
 		return errors.Join(err, a.Close())
 	}
 	return nil
+}
+
+// Warm unpacks the pinned CLI package into the shared cache once, so searches
+// do not each unpack it into their throwaway home.
+func (a *Agent) Warm(ctx context.Context) error {
+	if a.owner == nil || !filepath.IsAbs(a.Path) {
+		return errors.New("prepared runtime and absolute CLI path required")
+	}
+	dir, err := os.MkdirTemp(a.Root, "search-warm-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	cmd := exec.CommandContext(ctx, a.Path, "--version")
+	cmd.Env = a.env(dir)
+	cmd.Dir = dir
+	return cmd.Run()
 }
 
 // Close releases runtime ownership after all sessions have finished. The lock
