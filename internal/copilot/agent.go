@@ -370,6 +370,7 @@ func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking s
 		return ranking, search.ErrAISession
 	}
 	st.session = time.Since(mark)
+	meter := search.MeterFrom(ctx)
 	unsubscribe := session.On(func(event sdk.SessionEvent) {
 		st.mu.Lock()
 		defer st.mu.Unlock()
@@ -379,12 +380,14 @@ func (r *run) Rank(ctx context.Context, query string, t search.Tools) (ranking s
 			st.inputTokens += value(d.InputTokens)
 			st.outputTokens += value(d.OutputTokens)
 			st.reasoning += value(d.ReasoningTokens)
+			recordUsage(meter, d)
 		case *sdk.ToolExecutionStartData:
 			st.toolCalls++
 		}
 	})
 	defer unsubscribe()
 	mark = time.Now()
+	meter.Inference()
 	reply, err := session.SendAndWait(ctx, sdk.MessageOptions{Prompt: prompt})
 	st.mu.Lock()
 	st.inference = time.Since(mark)
@@ -408,6 +411,25 @@ func value(n *int64) int64 {
 		return 0
 	}
 	return *n
+}
+
+// recordUsage reports the server-side charge. Cost is a model multiplier,
+// not AI credits, and is deliberately ignored.
+func recordUsage(m *search.Meter, d *sdk.AssistantUsageData) {
+	var id string
+	if d.Accounting != nil && d.Accounting.UsageID != "" {
+		id = d.Accounting.SourceSessionID + "/" + d.Accounting.UsageID
+	}
+	status := rpc.AiCreditsStatusComplete
+	if d.AiCreditsStatus != nil {
+		status = *d.AiCreditsStatus
+	}
+	reported := d.CopilotUsage != nil && status != rpc.AiCreditsStatusUnavailable
+	var nano float64
+	if reported {
+		nano = d.CopilotUsage.TotalNanoAiu
+	}
+	m.Record(id, reported, status == rpc.AiCreditsStatusPartial, nano)
 }
 
 func verifyToolSurface(ctx context.Context, session *sdk.Session) error {

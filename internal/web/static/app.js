@@ -35,15 +35,6 @@ document.addEventListener("htmx:error", () => {
     region.setAttribute("role", "alert");
   }
 });
-document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll("[data-query]").forEach(button => {
-    button.addEventListener("click", () => {
-      const input = document.getElementById("query");
-      input.value = button.dataset.query;
-      input.focus();
-    });
-  });
-});
 document.addEventListener("htmx:after:request", event => {
   const response = event.detail?.ctx?.response;
   if (response && response.status >= 400) {
@@ -77,6 +68,7 @@ document.addEventListener("htmx:after:request", event => {
     const status = document.getElementById("search-status");
     const message = results.dataset.searchMessage;
     if (status && status.textContent !== message) status.textContent = message;
+    document.dispatchEvent(new CustomEvent("paperlens:results", { detail: results }));
   }
 
   function closePreview(card) {
@@ -174,5 +166,213 @@ document.addEventListener("htmx:after:request", event => {
       }
       enhanceResults();
     }).observe(document.body, { childList: true, subtree: true });
+  });
+})();
+
+// Reloadable search URLs and private recent-search history.
+(() => {
+  const STORAGE_KEY = "paperlens.recentSearches.v1";
+  const MAX_ITEMS = 10;
+  const PARAMS = ["after", "before", "correspondent", "field", "mode", "q", "tag", "type", "value"];
+  const STATUSES = ["pending", "none", "complete", "partial", "unavailable"];
+  let replaceNext = false;
+  let shownSearch = window.location.pathname + window.location.search;
+
+  // Browser storage is untrusted: only rebuild same-origin home URLs from known parameters.
+  function normalizeURL(raw) {
+    if (typeof raw !== "string" || raw.length > 4096 || !raw.startsWith("/?")) return null;
+    let parsed;
+    try {
+      parsed = new URL(raw, window.location.origin);
+    } catch {
+      return null;
+    }
+    if (parsed.origin !== window.location.origin || parsed.pathname !== "/") return null;
+    const clean = new URLSearchParams();
+    for (const key of PARAMS) {
+      const value = parsed.searchParams.get(key);
+      if (value !== null && value !== "" && value.length <= 500) clean.set(key, value);
+    }
+    const query = clean.get("q")?.trim();
+    if (!query) return null;
+    return "/?" + clean.toString();
+  }
+
+  function sanitize(item) {
+    if (!item || typeof item !== "object") return null;
+    const url = normalizeURL(item.url);
+    if (!url) return null;
+    const at = Number(item.at);
+    return {
+      url,
+      query: new URLSearchParams(url.slice(1)).get("q").slice(0, 500),
+      keyword: new URLSearchParams(url.slice(1)).get("mode") === "keyword",
+      at: Number.isFinite(at) && at > 0 ? at : 0,
+      jobId: typeof item.jobId === "string" && /^[A-Za-z0-9]{1,64}$/.test(item.jobId) ? item.jobId : "",
+      credits: typeof item.credits === "string" ? item.credits.slice(0, 120) : "",
+      status: STATUSES.includes(item.status) ? item.status : "unavailable"
+    };
+  }
+
+  function storage() {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  function load() {
+    const store = storage();
+    if (!store) return { items: [], ok: false };
+    try {
+      const data = JSON.parse(store.getItem(STORAGE_KEY) || "null");
+      if (!data || data.v !== 1 || !Array.isArray(data.items)) return { items: [], ok: true };
+      const seen = new Set();
+      const items = [];
+      for (const raw of data.items.slice(0, MAX_ITEMS * 2)) {
+        const item = sanitize(raw);
+        if (item && !seen.has(item.url)) {
+          seen.add(item.url);
+          items.push(item);
+        }
+        if (items.length === MAX_ITEMS) break;
+      }
+      return { items, ok: true };
+    } catch {
+      return { items: [], ok: false };
+    }
+  }
+
+  function save(items) {
+    const store = storage();
+    if (!store) return false;
+    try {
+      store.setItem(STORAGE_KEY, JSON.stringify({ v: 1, items }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function formatTime(at) {
+    if (!at) return "";
+    try {
+      return new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    } catch {
+      return new Date(at).toISOString();
+    }
+  }
+
+  function render(items, ok) {
+    const panel = document.querySelector("[data-recent]");
+    if (!panel) return;
+    panel.hidden = false;
+    const list = panel.querySelector("[data-recent-list]");
+    const rows = items.map(item => {
+      const li = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = item.url;
+      link.className = "recent-link";
+      const query = document.createElement("span");
+      query.className = "recent-query";
+      query.textContent = item.query;
+      const meta = document.createElement("span");
+      meta.className = "recent-meta";
+      const mode = document.createElement("span");
+      mode.textContent = item.keyword ? "Keyword" : "AI";
+      const time = document.createElement("time");
+      if (item.at) time.dateTime = new Date(item.at).toISOString();
+      time.textContent = formatTime(item.at);
+      const credits = document.createElement("span");
+      credits.className = `recent-credits credits-${item.status}`;
+      credits.textContent = item.credits || "AI credits not reported yet";
+      meta.append(mode, time, credits);
+      link.append(query, meta);
+      li.append(link);
+      return li;
+    });
+    list.replaceChildren(...rows);
+    panel.querySelector("[data-recent-empty]").hidden = items.length > 0;
+    panel.querySelector("[data-recent-clear]").disabled = items.length === 0;
+    const error = panel.querySelector("[data-recent-error]");
+    error.hidden = ok;
+    error.textContent = ok ? "" : "Recent searches can't be saved in this browser (storage is blocked or full). Searching still works.";
+  }
+
+  function update(mutate) {
+    const state = load();
+    const items = mutate(state.items).slice(0, MAX_ITEMS);
+    const saved = state.ok && save(items);
+    render(items, saved);
+  }
+
+  function withPresentation(url) {
+    const theme = new URLSearchParams(window.location.search).get("scoutTheme");
+    return theme ? `${url}&scoutTheme=${encodeURIComponent(theme)}` : url;
+  }
+
+  document.addEventListener("paperlens:results", event => {
+    const results = event.detail;
+    const url = normalizeURL(results.dataset.searchUrl);
+    const jobId = results.dataset.jobId;
+    if (!url || !jobId) return;
+    const entry = {
+      url, jobId,
+      at: Date.now(),
+      credits: results.dataset.credits || "",
+      status: STATUSES.includes(results.dataset.creditsStatus) ? results.dataset.creditsStatus : "pending"
+    };
+    if (results.dataset.searchAccepted === "true") {
+      const target = withPresentation(url);
+      if (replaceNext) {
+        history.replaceState(null, "", target);
+      } else if (window.location.pathname + window.location.search !== target) {
+        history.pushState(null, "", target);
+      }
+      replaceNext = false;
+      shownSearch = window.location.pathname + window.location.search;
+      const panel = document.querySelector("[data-recent]");
+      if (panel) panel.open = false;
+      update(items => [sanitize(entry), ...items.filter(item => item.url !== url)]);
+      return;
+    }
+    // Late or paginated responses only update the run they belong to.
+    update(items => items.map(item => item.jobId === jobId
+      ? { ...item, credits: entry.credits, status: entry.status }
+      : item));
+  });
+
+  document.addEventListener("click", event => {
+    if (!(event.target instanceof Element) || !event.target.closest("[data-recent-clear]")) return;
+    const store = storage();
+    let ok = Boolean(store);
+    try {
+      store?.removeItem(STORAGE_KEY);
+    } catch {
+      ok = false;
+    }
+    render([], ok);
+  });
+
+  // Back/Forward restores another search URL; reloading reruns it once.
+  window.addEventListener("popstate", () => {
+    const current = window.location.pathname + window.location.search;
+    if (window.location.pathname === "/" && current !== shownSearch) window.location.reload();
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const state = load();
+    render(state.items, state.ok);
+    const form = document.getElementById("search-form");
+    if (form?.hasAttribute("data-autorun")) {
+      const panel = document.querySelector("[data-recent]");
+      if (panel) panel.open = false;
+      // Let HTMX finish initializing so the rerun uses the same POST flow.
+      setTimeout(() => {
+        replaceNext = true;
+        form.requestSubmit();
+      });
+    }
   });
 })();

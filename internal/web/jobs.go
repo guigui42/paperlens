@@ -124,6 +124,7 @@ func (j *jobs) worker() {
 				}
 			})
 			j.mu.Lock()
+			item.Output.Usage = out.Usage
 			switch {
 			case errors.Is(item.ctx.Err(), context.DeadlineExceeded):
 				item.State = "expired"
@@ -193,4 +194,27 @@ func (j *jobs) close() {
 }
 func (j job) running() bool {
 	return j.State != "done" && j.State != "error" && j.State != "cancelled" && j.State != "expired"
+}
+
+// Keyword reports whether the search was submitted as keyword-only.
+func (j job) Keyword() bool { return j.keyword }
+
+// URL is the canonical, reloadable address of this search's inputs.
+func (j job) URL() string { return searchURL(j.Query, j.Filters, j.keyword) }
+
+// CreditsStatus is a search.Credits* state, or "pending" until the worker
+// has recorded the final usage (a cancelled run may still be releasing).
+func (j job) CreditsStatus() string {
+	if !j.finished {
+		return "pending"
+	}
+	return j.Output.Usage.Status()
+}
+
+// Credits is the displayed AI-credit charge for this search.
+func (j job) Credits() string {
+	if !j.finished {
+		return "AI credits not reported yet"
+	}
+	return j.Output.Usage.Label()
 }

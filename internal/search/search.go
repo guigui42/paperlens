@@ -104,6 +104,8 @@ type Output struct {
 	Candidates, Calls int
 	Limited           bool
 	Vocabulary        paperless.Vocabulary
+	// Usage is set on every return from Run, including errors.
+	Usage Usage
 }
 
 // Engine orchestrates the original query and optional model retrieval.
@@ -143,6 +145,12 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 	var metadataTime, paperlessTime, prefetchTime, agentTime, startWaitTime time.Duration
 	var j *job
 	var overlap bool
+	meter := &Meter{}
+	ctx = WithMeter(ctx, meter)
+	defer func() {
+		// Registered first so it runs last, after any unused runtime is released.
+		out.Usage = meter.Snapshot()
+	}()
 	defer func() {
 		attrs := []any{"mode", out.Mode, "failed", err != nil, "metadata_ms", metadataTime.Milliseconds(), "paperless_ms", paperlessTime.Milliseconds(),
 			"prefetch_ms", prefetchTime.Milliseconds(), "agent_ms", agentTime.Milliseconds(), "overlap", overlap, "start_wait_ms", startWaitTime.Milliseconds(),

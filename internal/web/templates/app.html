@@ -16,7 +16,7 @@
 {{define "home"}}{{template "head" .}}
 <main id="main" class="search-page">
 <section class="intro"><h1>Find a document.</h1><p class="lede">Search by what you remember, or narrow it down with filters.</p></section>
-<form class="search-form" action="/search" method="post" hx-post="/search" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace">
+<form id="search-form" class="search-form" action="/search" method="post"{{if .Autorun}} data-autorun{{end}} hx-post="/search" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label class="sr-only" for="query">Search your documents</label>
 <div class="search-box"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><input id="query" name="q" type="search" required maxlength="500" value="{{.Query}}" autocomplete="off" placeholder="A title, sender, or something you remember…" aria-describedby="search-privacy"><button class="primary" type="submit">Search</button></div>
@@ -27,23 +27,29 @@
 <label>Tag<select name="tag" aria-label="Tag"><option value="">Any tag</option>{{range .Vocab.Tags}}<option value="{{.ID}}" {{if eq $.Filters.Tag .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
 <label>Custom field<select name="field" aria-label="Custom field"><option value="">No custom filter</option>{{range .Vocab.Fields}}{{if filterable .DataType}}<option value="{{.ID}}" {{if eq $.Filters.Field .ID}}selected{{end}}>{{.Name}} ({{.DataType}})</option>{{end}}{{end}}</select></label>
 <label>Exact custom value<input name="value" list="custom-options" maxlength="200" value="{{.Filters.Value}}" placeholder="Text, number, true/false or YYYY-MM-DD"><datalist id="custom-options">{{range .Vocab.Fields}}{{$field:=.Name}}{{range .ExtraData.Options}}<option value="{{.ID}}">{{$field}}: {{.Label}}</option>{{end}}{{end}}</datalist></label><p class="filter-note">Date filters use the document's issue date, not a year mentioned in its text. Filters are never relaxed.</p>
-</div></details><label class="mode"><input type="checkbox" name="mode" value="keyword" {{if not .AI}}checked{{end}}>Keyword only</label></div>
+</div></details><label class="mode"><input type="checkbox" name="mode" value="keyword" {{if .Keyword}}checked{{end}}>Keyword only</label></div>
 </form>
-<div class="examples"><span>Try a search</span><button type="button" data-query="Latest home insurance certificate">Home insurance</button><button type="button" data-query="Facture électricité septembre 2025">Electricity bill</button><button type="button" data-query="Warranty for the washing machine">Appliance warranty</button></div>
+<details class="recent" data-recent hidden open><summary>Recent searches</summary>
+<p class="recent-empty" data-recent-empty>No recent searches yet. Searches you run here are kept privately in this browser.</p>
+<ol class="recent-list" data-recent-list></ol>
+<p class="notice error recent-error" data-recent-error role="alert" hidden></p>
+<div class="recent-actions"><span>Opening a recent search runs it again. AI searches can use AI credits each time; amounts shown are from the last run.</span><button type="button" data-recent-clear>Clear history</button></div>
+</details>
 <p id="search-privacy" class="privacy">AI searches send selected excerpts to your configured Copilot model, only when you submit. Required exclusion tags keep protected documents out of AI.</p>
 <p id="search-status" class="sr-only" role="status" aria-atomic="true"></p>
 {{template "results" .}}
 </main>{{template "foot" .}}{{end}}
 
 {{define "results"}}<section id="results" class="results" aria-label="Search results" {{if or .Job.ID .Query}}data-search-active="true"{{end}}
+{{if .Job.ID}}data-job-id="{{.Job.ID}}" data-search-url="{{.Job.URL}}" data-search-query="{{.Job.Query}}" data-search-keyword="{{.Job.Keyword}}" data-credits="{{.Job.Credits}}" data-credits-status="{{.Job.CreditsStatus}}"{{end}}{{if .Accepted}} data-search-accepted="true"{{end}}
 data-search-message="{{if .Running}}Search in progress: {{.Job.State}}.{{else if eq .Job.State "cancelled"}}Search cancelled.{{else if eq .Job.State "done"}}Results page {{.Next}}. {{len .Results}} documents shown for {{.Job.Query}}. {{.Job.Output.Mode}}.{{if .Job.Output.Limited}} Retrieval limits reached. These results are not exhaustive.{{end}}{{end}}"
 {{if .Running}}hx-get="/jobs/{{.Job.ID}}" hx-trigger="every 700ms" hx-swap="outerHTML" hx-sync="#main:abort"{{end}}>
 {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
 {{if .Running}}<div class="progress"><div><span class="pulse" aria-hidden="true"></span><strong>{{.Job.State}}</strong><p>Searching your archive for matching documents.</p></div><form method="post" action="/jobs/{{.Job.ID}}/cancel" hx-post="/jobs/{{.Job.ID}}/cancel" hx-target="#results" hx-swap="outerHTML" hx-sync="#main:replace"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">Cancel search</button></form></div>
-{{else if eq .Job.State "cancelled"}}<div class="notice">Search cancelled. No further retrieval will run.</div>
-{{else if or (eq .Job.State "error") (eq .Job.State "expired")}}<div class="notice error" role="alert">{{.Job.Error}}</div>
+{{else if eq .Job.State "cancelled"}}<div class="notice">Search cancelled. No further retrieval will run.</div><p class="credits" data-credits-label>{{.Job.Credits}}</p>
+{{else if or (eq .Job.State "error") (eq .Job.State "expired")}}<div class="notice error" role="alert">{{.Job.Error}}</div><p class="credits" data-credits-label>{{.Job.Credits}}</p>
 {{else if eq .Job.State "done"}}
-<div class="result-heading"><div><h2>Documents for “{{.Job.Query}}”</h2><p class="search-mode">{{.Job.Output.Mode}}</p></div><span>{{.Job.Output.Candidates}} unique candidates · {{.Job.Output.Calls}} searches</span></div>
+<div class="result-heading"><div><h2>Documents for “{{.Job.Query}}”</h2><p class="search-mode">{{.Job.Output.Mode}}</p></div><span>{{.Job.Output.Candidates}} unique candidates · {{.Job.Output.Calls}} searches · <span class="credits" data-credits-label>{{.Job.Credits}}</span></span></div>
 {{if .Job.Output.Notice}}<div class="notice">{{.Job.Output.Notice}}</div>{{end}}
 {{if .Job.Output.Limited}}<div class="notice">Retrieval limits reached. These results are not exhaustive. Refine your query or filters.</div>{{end}}
 {{if not .Results}}<div class="empty"><h3>No matching evidence found.</h3><p>Try a document title, sender, or a more specific phrase. Missing OCR or no keyword overlap can hide a document. Your filters have not been relaxed.</p></div>{{end}}
