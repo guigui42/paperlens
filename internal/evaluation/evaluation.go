@@ -52,8 +52,13 @@ func (FakeAgent) Rank(ctx context.Context, q string, t search.Tools) (search.Ran
 	}
 	var eligible []evidenceCandidate
 	words := strings.FieldsFunc(search.Fold(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
-	// Prefetched excerpts are cached, so rereading them costs no budget; stop
-	// once the remaining budget is spent, like a model would.
+	// Prefetched excerpts are free to reread, so evaluate them first and then
+	// spend the remaining budget on other candidates, like a model would.
+	seeded := map[int]bool{}
+	for _, ev := range t.Seed().Excerpts {
+		seeded[ev.ID] = true
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return seeded[candidates[i].ID] && !seeded[candidates[j].ID] })
 	for _, c := range candidates[:min(t.Limits().Excerpts, len(candidates))] {
 		ev, err := t.Excerpt(ctx, c.ID)
 		if err != nil {

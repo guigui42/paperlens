@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/guigui42/paperlens/internal/config"
 	"github.com/guigui42/paperlens/internal/copilot"
@@ -40,9 +41,11 @@ func main() {
 				fmt.Fprintln(os.Stderr, "runtime ownership release failed")
 			}
 		}()
-		if err := a.Warm(context.Background()); err != nil {
+		warm, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if err := a.Warm(warm); err != nil {
 			fmt.Fprintln(os.Stderr, "copilot package cache warm-up failed")
 		}
+		cancel()
 		agent = a
 		limits = search.Limits{Searches: c.MaxSearches, Candidates: c.MaxCandidates, Excerpts: c.MaxExcerpts, Characters: c.ExcerptChars}
 		effort := c.ReasoningEffort

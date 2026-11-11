@@ -29,7 +29,7 @@ func TestRankMergeAndChangingExclusion(t *testing.T) {
 		{Results: []paperless.Document{{ID: 2, Title: "B"}, {ID: 3, Title: "C"}}},
 		{Results: []paperless.Document{{ID: 1, Title: "A", Tags: []int{9}}}},
 	}}
-	j := &job{api: api, limits: Limits{Searches: 6, Candidates: 100, Excerpts: 12, Characters: 8000}, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, excluded: map[int]bool{9: true}}
+	j := &job{api: api, limits: Limits{Searches: 6, Candidates: 100, Excerpts: 12, Characters: 8000}, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, excluded: map[int]bool{9: true}}
 	ctx := context.Background()
 	if _, err := j.Search(ctx, "first"); err != nil {
 		t.Fatal(err)
@@ -114,5 +114,46 @@ func TestOriginalQueryLeavesRoomForExpansions(t *testing.T) {
 	out, err := (&Engine{API: api, Limits: e.Limits}).Run(context.Background(), "broad", paperless.Filters{}, true, nil)
 	if err != nil || out.Candidates != 40 {
 		t.Fatal("keyword search lost candidates to an unused reserve", out.Candidates, err)
+	}
+}
+
+func TestSmallPoolsStillReserveExpansionSlots(t *testing.T) {
+	for candidates, want := range map[int]int{1: 1, 2: 1, 3: 2, 4: 3, 40: 30} {
+		broad := paperless.Page{Results: []paperless.Document{{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4}}}
+		api := &reserveAPI{pageAPI: pageAPI{pages: []paperless.Page{broad}}}
+		agent := agentFunc(func(context.Context, string, Tools) (Ranking, error) { return Ranking{Results: []Pick{}}, nil })
+		e := &Engine{API: api, Agent: agent, Limits: Limits{Searches: 6, Candidates: candidates, Excerpts: 6, Characters: 2500}}
+		if _, err := e.Run(context.Background(), "broad", paperless.Filters{}, false, nil); err != nil || api.limits[0] != want {
+			t.Fatal("original query page size", candidates, api.limits, err)
+		}
+	}
+}
+
+func TestExpansionRefreshesChargedExcerptWindow(t *testing.T) {
+	long := strings.Repeat("filler ", 400) + "alpha evidence here." + strings.Repeat(" filler", 400) + " omega evidence here." + strings.Repeat(" filler", 400)
+	doc := paperless.Document{ID: 1, Title: "Long", Content: long}
+	api := &pageAPI{pages: []paperless.Page{{Results: []paperless.Document{doc}}, {Results: []paperless.Document{doc}}}}
+	j := &job{api: api, limits: Limits{Searches: 6, Candidates: 10, Excerpts: 1, Characters: 300}, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}}
+	ctx := context.Background()
+	if _, err := j.Search(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := j.Excerpt(ctx, 1)
+	if err != nil || !strings.Contains(first.Text, "alpha evidence") {
+		t.Fatal(first, err)
+	}
+	if _, err = j.Search(ctx, "omega"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := j.Excerpt(ctx, 1)
+	if err != nil || !strings.Contains(second.Text, "omega evidence") {
+		t.Fatal("expanded window unreadable at zero remaining budget", second, err)
+	}
+	out, err := j.validate(Ranking{Results: []Pick{{ID: 1, Quote: "alpha evidence here.", Strength: "strong"}}})
+	if err != nil || len(out) != 1 {
+		t.Fatal("earlier window no longer a valid quote source", err)
+	}
+	if _, err = j.validate(Ranking{Results: []Pick{{ID: 1, Quote: "omega evidence here.", Strength: "strong"}}}); err != nil {
+		t.Fatal(err)
 	}
 }

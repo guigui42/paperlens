@@ -171,7 +171,7 @@ func sessionConfig(ctx context.Context, dir, model string, t search.Tools) *sdk.
 			}, _ sdk.ToolInvocation) ([]search.Candidate, error) {
 				return t.Search(ctx, p.Query)
 			}),
-		sdk.DefineTool("read_document_excerpts", fmt.Sprintf("Read evidence for several eligible already-retrieved IDs in one call. At most %d new documents per search, %d characters each. Prefetched excerpts are already supplied; do not reread them.", limits.Excerpts, limits.Characters),
+		sdk.DefineTool("read_document_excerpts", fmt.Sprintf("Read evidence for several eligible already-retrieved IDs in one call. At most %d excerpt-bearing documents per search, including the prefetched ones, %d characters each. Prefetched excerpts are already supplied; do not reread them.", limits.Excerpts, limits.Characters),
 			func(p struct {
 				IDs []int `json:"ids"`
 			}, _ sdk.ToolInvocation) ([]excerptResult, error) {

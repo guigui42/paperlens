@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -123,7 +124,7 @@ type job struct {
 	limits    Limits
 	docs      map[int]paperless.Document
 	ranks     map[int]float64
-	evidence  map[int]string
+	evidence  map[int][]string
 	calls     int
 	limited   bool
 	stage     func(string)
@@ -185,11 +186,11 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			}
 		}()
 	}
-	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int]string{}, stage: stage, queries: map[string]bool{}}
+	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]bool{}}
 	if useAI && e.Limits.Searches > 1 {
 		// Keep room for model expansions so a broad original query cannot
 		// occupy every candidate slot before they run.
-		j.reserve = e.Limits.Candidates / 4
+		j.reserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
 	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
@@ -414,17 +415,19 @@ func (j *job) Excerpt(ctx context.Context, id int) (Evidence, error) {
 	if !ok || j.isExcluded(d) {
 		return Evidence{}, errors.New("document is not an eligible retrieved candidate")
 	}
-	if text, ok := j.evidence[id]; ok {
-		return Evidence{id, text}, nil
-	}
-	if len(j.evidence) >= j.limits.Excerpts {
-		j.limited = true
-		return Evidence{}, errors.New("excerpt budget exhausted")
-	}
 	// OCR was retrieved in the bounded search response. A fresh unfiltered read
 	// could race a tag/filter change and bypass the policy snapshot.
 	text := clip(d.Title+"\n"+filename(d)+"\n"+d.Content, j.limits.Characters)
-	j.evidence[id] = text
+	read := j.evidence[id]
+	if len(read) == 0 && len(j.evidence) >= j.limits.Excerpts {
+		j.limited = true
+		return Evidence{}, errors.New("excerpt budget exhausted")
+	}
+	// A later expansion may centre the window elsewhere. The document is
+	// already charged, and earlier windows stay valid quote sources.
+	if !slices.Contains(read, text) {
+		j.evidence[id] = append(read, text)
+	}
 	return Evidence{id, text}, nil
 }
 func (j *job) validate(r Ranking) ([]Result, error) {
@@ -435,8 +438,8 @@ func (j *job) validate(r Ranking) ([]Result, error) {
 	seen := map[int]bool{}
 	for _, p := range r.Results {
 		d, ok := j.docs[p.ID]
-		text, read := j.evidence[p.ID]
-		if !ok || !read || j.isExcluded(d) || seen[p.ID] || !j.filters.Matches(d) || strings.TrimSpace(p.Quote) == "" || len([]rune(p.Quote)) > 500 || !strings.Contains(text, p.Quote) || (p.Strength != "strong" && p.Strength != "weak") {
+		grounded := slices.ContainsFunc(j.evidence[p.ID], func(text string) bool { return strings.Contains(text, p.Quote) })
+		if !ok || !grounded || j.isExcluded(d) || seen[p.ID] || !j.filters.Matches(d) || strings.TrimSpace(p.Quote) == "" || len([]rune(p.Quote)) > 500 || (p.Strength != "strong" && p.Strength != "weak") {
 			return nil, errors.New("invalid or ungrounded model evidence")
 		}
 		seen[p.ID] = true
