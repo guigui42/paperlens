@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -42,18 +43,21 @@ type Server struct {
 type page struct {
 	Title, CSRF, Query, Error, Nonce string
 	Demo, AI, UploadEnabled          bool
-	Vocab                            paperless.Vocabulary
-	Filters                          paperless.Filters
-	Job                              job
-	Running                          bool
-	Results                          []search.Result
-	Next, Previous                   int
-	HasPrevious, HasNext             bool
-	Receipt                          receipt
-	Receipts                         []receipt
-	Document                         paperless.Document
-	PDF                              bool
-	PaperlessURL                     string
+	// Keyword pre-checks "Keyword only"; Autorun asks the browser to submit
+	// a search restored from the URL; Accepted marks a newly started job.
+	Keyword, Autorun, Accepted bool
+	Vocab                      paperless.Vocabulary
+	Filters                    paperless.Filters
+	Job                        job
+	Running                    bool
+	Results                    []search.Result
+	Next, Previous             int
+	HasPrevious, HasNext       bool
+	Receipt                    receipt
+	Receipts                   []receipt
+	Document                   paperless.Document
+	PDF                        bool
+	PaperlessURL               string
 }
 
 // New validates persistent storage before accepting requests.
@@ -124,7 +128,7 @@ func (s *Server) Handler() http.Handler {
 }
 func (s *Server) base(w http.ResponseWriter, r *http.Request) (page, string) {
 	owner := s.browser(w, r)
-	return page{Title: "Paperlens", CSRF: s.sign("csrf:" + owner), Demo: s.config.Demo, AI: s.config.AI, UploadEnabled: len(s.config.UploadTypes) > 0}, owner
+	return page{Title: "Paperlens", CSRF: s.sign("csrf:" + owner), Demo: s.config.Demo, AI: s.config.AI, Keyword: !s.config.AI, UploadEnabled: len(s.config.UploadTypes) > 0}, owner
 }
 func (s *Server) render(w http.ResponseWriter, name string, p page) {
 	var b bytes.Buffer
@@ -141,16 +145,81 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.base(w, r)
 	v, err := s.api.Metadata(r.Context())
+	policyUnavailable := false
 	if err != nil {
 		p.Error = err.Error()
 	} else {
 		p.Vocab = v
 		if p.AI && s.jobs.engine.ValidatePolicy(v) != nil {
+			policyUnavailable = true
 			p.AI = false
+			p.Keyword = true
 			p.Error = search.ErrExclusionPolicy.Error()
 		}
 	}
+	// A search URL only restores inputs here; the browser reruns it through
+	// the CSRF-protected POST so GET never starts billable work.
+	if q := r.URL.Query(); q.Has("q") {
+		p.Query = strings.TrimSpace(q.Get("q"))
+		p.Keyword = parseMode(q.Get("mode"), p.Keyword) || policyUnavailable
+		f, ferr := parseFilters(r)
+		if ferr == nil && err == nil {
+			ferr = f.Validate(v)
+		}
+		switch {
+		case ferr != nil:
+			p.Error = "This search link has invalid filters (" + ferr.Error() + "). Adjust them and search again."
+		case len([]rune(p.Query)) < 1 || len([]rune(p.Query)) > 500:
+			p.Error = "This search link needs a query of 1 to 500 characters."
+			p.Filters = f
+		default:
+			p.Filters = f
+			p.Autorun = err == nil && (!policyUnavailable || q.Get("mode") == "keyword")
+		}
+	}
 	s.render(w, "home", p)
+}
+
+// parseMode keeps saved searches stable when the server default changes.
+func parseMode(mode string, fallback bool) bool {
+	switch mode {
+	case "keyword":
+		return true
+	case "ai":
+		return false
+	}
+	return fallback
+}
+
+// searchURL is the canonical reloadable form of a search. It never holds
+// CSRF tokens, job IDs or results.
+func searchURL(query string, f paperless.Filters, keyword bool) string {
+	v := url.Values{}
+	v.Set("q", query)
+	add := func(k, s string) {
+		if s != "" {
+			v.Set(k, s)
+		}
+	}
+	id := func(n int) string {
+		if n < 1 {
+			return ""
+		}
+		return strconv.Itoa(n)
+	}
+	add("after", f.After)
+	add("before", f.Before)
+	add("correspondent", id(f.Correspondent))
+	add("type", id(f.Type))
+	add("tag", id(f.Tag))
+	add("field", id(f.Field))
+	add("value", f.Value)
+	if keyword {
+		v.Set("mode", "keyword")
+	} else {
+		v.Set("mode", "ai")
+	}
+	return "/?" + v.Encode()
 }
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -191,6 +260,7 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Query = strings.TrimSpace(r.FormValue("q"))
+	p.Keyword = r.FormValue("mode") == "keyword"
 	f, err := parseFilters(r)
 	if err == nil {
 		p.Vocab, err = s.api.Metadata(r.Context())
@@ -202,12 +272,13 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 		err = errors.New("enter a query of 1 to 500 characters")
 	}
 	if err == nil {
-		p.Job, err = s.jobs.start(owner, p.Query, f, r.FormValue("mode") == "keyword", p.Vocab)
+		p.Job, err = s.jobs.start(owner, p.Query, f, p.Keyword, p.Vocab)
 	}
 	if err != nil {
 		p.Error = err.Error()
 	} else {
 		p.Running = true
+		p.Accepted = true
 	}
 	p.Filters = f
 	s.renderSearch(w, r, p)
@@ -230,6 +301,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	p.Job = item
 	p.Query = item.Query
 	p.Filters = item.Filters
+	p.Keyword = item.keyword
 	p.Running = item.running()
 	p.Vocab = item.Output.Vocabulary
 	rawPage := r.URL.Query().Get("page")

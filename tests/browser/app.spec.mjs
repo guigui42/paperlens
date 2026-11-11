@@ -25,7 +25,7 @@ test("HTMX search, lazy thumbnails, inline preview, canonical page and download"
   await page.getByLabel("Search your documents").press("Enter");
   await expect(page.getByRole("heading", { name: /Documents for/ })).toBeVisible();
   await expect(page.locator(".result-card").first()).toContainText("Home insurance certificate 2025");
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL("/?mode=keyword&q=latest+home+insurance+certificate");
   await expect(page.getByText("Ordinary Paperless keyword results.")).toBeVisible();
   const card = page.getByRole("article").first();
   await expect.poll(() => card.locator("[data-thumbnail]").evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
@@ -43,7 +43,7 @@ test("HTMX search, lazy thumbnails, inline preview, canonical page and download"
   // Chromium's native PDF viewer owns the navigation body, outside Playwright's response cache.
   const documentBytes = await page.request.get(pdf.url());
   expect((await documentBytes.body()).subarray(0, 4).toString()).toBe("%PDF");
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL("/?mode=keyword&q=latest+home+insurance+certificate");
   await expect(page.getByLabel("Search your documents")).toHaveValue("latest home insurance certificate");
   await card.getByRole("button", { name: /^Close preview of/ }).click();
   await expect(card.getByRole("region")).toBeHidden();
@@ -85,7 +85,7 @@ test("preview controls have one keyboard stop and isolated announcements", async
     await expect(card.getByRole("link", { name: "Download original", exact: true })).toBeFocused();
     await title.focus();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByRole("checkbox", { name: "Keyword only", exact: true })).toBeFocused();
+    await expect(page.locator("[data-recent] summary")).toBeFocused();
     await title.focus();
     await page.keyboard.press("Enter");
     await expect(card.getByRole("status")).toHaveText("Loading document preview...");
@@ -93,7 +93,7 @@ test("preview controls have one keyboard stop and isolated announcements", async
       element.parentElement.closest('[aria-live], [role="status"], [role="alert"]') === null
     )).toBe(true);
     await expect(searchStatus).toHaveText(announcement);
-    await expect(page).toHaveURL("/");
+    await expect(page).toHaveURL(/\/\?mode=keyword&q=/);
     release();
     await expect(card.getByTitle("PDF preview")).toBeVisible();
     await card.getByRole("button", { name: /^Close preview of/ }).click();
@@ -200,7 +200,7 @@ test("long OCR stays compact and narrow layouts do not overflow", async ({ page 
   await expect(card).toBeVisible();
   const bounds = await card.boundingBox();
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(900);
-  await expect(page.locator(".examples")).toBeHidden();
+  await expect(page.locator(".intro .lede")).toBeHidden();
   const quote = "A line of original OCR with some evidence.\n\n\n\n".repeat(12);
   await card.locator(".result-excerpt").evaluate((element, text) => { element.textContent = text; }, quote);
   const excerpt = card.locator(".result-excerpt");
@@ -239,7 +239,7 @@ test("inline previews still work after results pagination", async ({ page }) => 
   await page.getByRole("navigation", { name: "Results pages" }).getByRole("link", { name: "Previous", exact: true }).click();
   await expect(firstTitle).toHaveText(originalTitle);
   await expect(page.locator("iframe")).toHaveCount(0);
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL("/?mode=keyword&q=insurance+warranty+bill+receipt+registration+tax+newsletter+document");
 });
 
 test("uploaded image previews render inline and expose media failures", async ({ page }, testInfo) => {
@@ -277,9 +277,7 @@ test("Alpine CSP theme and responsive layout", async ({ page }) => {
   await page.getByLabel("Toggle color theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", initial === "dark" ? "light" : "dark");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "Home insurance", exact: true }).click();
-  await expect(page.getByLabel("Search your documents")).toBeFocused();
-  await expect(page.getByLabel("Search your documents")).toHaveValue("Latest home insurance certificate");
+  await expect(page.getByRole("button", { name: "Home insurance", exact: true })).toHaveCount(0);
   await expect(page.locator(".result-card")).toHaveCount(0);
 });
 
@@ -377,4 +375,95 @@ test("synthetic screenshot artifacts", async ({ page }, testInfo) => {
     await expect(page.getByText("Document stored.", { exact: true })).toBeVisible();
     await page.screenshot({ path: `${prefix}-receipt.png`, fullPage: true });
   }
+});
+
+test("search URLs reload, history and recent searches", async ({ page, context }) => {
+  const posts = [];
+  page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/search") posts.push(request); });
+  await expect(page.getByText("Try a search")).toHaveCount(0);
+  const recent = page.locator("[data-recent]");
+  await expect(recent).toContainText("No recent searches yet.");
+  const search = async query => {
+    await page.getByLabel("Search your documents").fill(query);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.locator("[data-credits-label]")).toHaveText("0 AI credits (no AI used)");
+  };
+  await search("home insurance");
+  await expect(page).toHaveURL("/?mode=keyword&q=home+insurance");
+  await search("electricity bill");
+  await search("home insurance");
+  await expect(recent).not.toHaveAttribute("open", "");
+  await recent.locator("summary").click();
+  const links = recent.locator(".recent-link");
+  await expect(links).toHaveCount(2);
+  await expect(links.first()).toContainText("home insurance");
+  await expect(links.first()).toContainText("0 AI credits (no AI used)");
+  await expect(links.first()).toHaveAttribute("href", "/?mode=keyword&q=home+insurance");
+
+  await page.goBack();
+  await expect(page).toHaveURL("/?mode=keyword&q=electricity+bill");
+  await expect(page.getByLabel("Search your documents")).toHaveValue("electricity bill");
+  await expect(page.locator("[data-history-restored]")).toBeVisible();
+  await expect(page.locator(".result-card")).toHaveCount(0);
+  expect(posts).toHaveLength(3);
+
+  posts.length = 0;
+  await page.reload();
+  await expect(page.locator("[data-credits-label]")).toBeVisible();
+  await expect(page).toHaveURL("/?mode=keyword&q=electricity+bill");
+  expect(posts).toHaveLength(1);
+  expect(posts[0].headers()["hx-request"]).toBe("true");
+
+  const other = await context.newPage();
+  await other.goto("/");
+  await expect(other.locator(".recent-link")).toHaveCount(2);
+  await other.evaluate(() => {
+    const items = Array.from({ length: 12 }, (_, i) => ({ url: "/?mode=keyword&q=" + encodeURIComponent(i === 0 ? "<img src=x onerror=alert(1)>" : "q" + i), at: Date.now() - i, credits: "0 AI credits (no AI used)", status: "none" }));
+    items.push({ url: "https://evil.example/?q=x" }, { url: "javascript:alert(1)" });
+    localStorage.setItem("paperlens.recentSearches.v1", JSON.stringify({ v: 1, items }));
+  });
+  await other.reload();
+  await expect(other.locator(".recent-link")).toHaveCount(10);
+  await expect(other.locator(".recent-query").first()).toHaveText("<img src=x onerror=alert(1)>");
+  await expect(other.locator("[data-recent] img")).toHaveCount(0);
+  await other.getByRole("button", { name: "Clear history" }).click();
+  await expect(other.locator(".recent-link")).toHaveCount(0);
+  await expect(other.locator("[data-recent]")).toContainText("No recent searches yet.");
+  expect(await other.evaluate(() => localStorage.getItem("paperlens.recentSearches.v1"))).toBeNull();
+  await other.close();
+});
+
+test("failed URL autorun does not replace the next successful history entry", async ({ page }) => {
+  let first = true;
+  const posts = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/search") posts.push(request);
+  });
+  await page.route("**/search", async route => {
+    if (first) {
+      first = false;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/?mode=keyword&q=home+insurance");
+  await expect.poll(() => posts.length).toBe(1);
+  await page.getByLabel("Search your documents").fill("electricity bill");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL("/?mode=keyword&q=electricity+bill");
+  await expect(page.locator("[data-credits-label]")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL("/?mode=keyword&q=home+insurance");
+  await expect(page.locator("[data-history-restored]")).toBeVisible();
+  expect(posts).toHaveLength(2);
+});
+
+test("invalid search links do not run", async ({ page }) => {
+  let posted = false;
+  page.on("request", request => { if (request.method() === "POST") posted = true; });
+  await page.goto("/?q=x&tag=99999");
+  await expect(page.getByText(/This search link has invalid filters/)).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(posted).toBe(false);
 });

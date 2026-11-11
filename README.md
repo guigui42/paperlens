@@ -37,6 +37,18 @@ Demo uploads are in memory and disappear when the process restarts.
 
 - Submitted-query search with staged progress, cancellation, bounded queues,
   explicit keyword-only mode and labelled AI fallback.
+- Each search has a reloadable URL (`/?q=…&mode=ai|keyword` plus any
+  filters). Opening or reloading it reruns the search through the normal
+  CSRF-protected POST; a plain GET never starts a job. Back/Forward restores
+  the search form without rerunning it, so it does not start another billable
+  AI search. Invalid links show the restored form with an error instead of running.
+- A "Recent searches" list keeps the last 10 distinct searches privately in
+  this browser's `localStorage` (never on the server), newest first, with a
+  Clear history button. Reopening one runs it again and can use AI credits again.
+- Each result shows the AI credits it used, as reported by Copilot
+  (`totalNanoAiu` ÷ 10⁹). Keyword-only searches show 0. If billing data is
+  missing or incomplete, Paperlens says "unavailable" or "at least … (partial
+  report)" rather than guessing; amounts depend on your Copilot plan reporting.
 - Live Paperless retrieval, French/English query expansion through Copilot,
   rank-based deduplication, bounded excerpts and strictly validated result IDs
   and quotes. Titles, dates, actions and URLs always come from Paperless.
@@ -274,7 +286,9 @@ it cannot sweep another server or evaluator's active sessions.
 
 Only the signing key and bounded receipts persist in app storage. Queries,
 document snippets and results live in memory until snapshot expiry; no search
-history is written. Logs do not include prompts/OCR/model answers or upstream
+history is written server-side. Search URLs contain the query and filters, so
+they appear in browser history, bookmarks and any reverse-proxy access logs;
+the recent-searches list stores the same URLs in the browser only. Logs do not include prompts/OCR/model answers or upstream
 error bodies. The CLI's telemetry is disabled. Local cleanup does **not** revoke
 data already processed by GitHub/model providers; review their applicable data
 handling terms separately. For disk-backed local runs, deleted files are not a
