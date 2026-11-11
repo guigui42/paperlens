@@ -109,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}", s.poll)
 	mux.HandleFunc("POST /jobs/{id}/cancel", s.cancelSearch)
 	mux.HandleFunc("GET /documents/{id}", s.preview)
+	mux.HandleFunc("GET /documents/{id}/thumbnail", s.thumbnail)
 	mux.HandleFunc("GET /documents/{id}/preview", s.binary)
 	mux.HandleFunc("GET /documents/{id}/download", s.binary)
 	mux.HandleFunc("GET /upload", s.uploadPage)
@@ -285,8 +286,53 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 	p.PDF = p.Document.MIME == "application/pdf" || (p.Document.ArchivedFilename != nil && *p.Document.ArchivedFilename != "")
 	p.PaperlessURL = s.api.DocumentURL(id)
 	p.Title = p.Document.Title
+	if r.Header.Get("X-Paperlens-Preview") == "inline" {
+		s.render(w, "document-viewer", p)
+		return
+	}
 	s.render(w, "preview", p)
 }
+
+func readDocumentBytes(body io.Reader, maxBinary int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(body, maxBinary+1))
+	if err != nil || int64(len(b)) > maxBinary {
+		return nil, fmt.Errorf("document exceeds the %d MiB proxy limit or could not be read; open it in Paperless", maxBinary>>20)
+	}
+	return b, nil
+}
+
+func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
+	id, err := documentID(r)
+	if err != nil {
+		http.Error(w, "Invalid document", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	res, err := s.api.Thumbnail(ctx, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer res.Body.Close()
+	b, err := readDocumentBytes(res.Body, 2<<20)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	typ := http.DetectContentType(b)
+	switch typ {
+	case "image/webp", "image/png", "image/jpeg":
+	default:
+		http.Error(w, "Thumbnail is not a supported image. Open the document to preview it.", http.StatusUnsupportedMediaType)
+		return
+	}
+	w.Header().Set("Content-Type", typ)
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.Write(b)
+}
+
 func (s *Server) binary(w http.ResponseWriter, r *http.Request) {
 	id, err := documentID(r)
 	if err != nil {
@@ -307,10 +353,9 @@ func (s *Server) binary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer res.Body.Close()
-	const maxBinary = 32 << 20
-	b, err := io.ReadAll(io.LimitReader(res.Body, maxBinary+1))
-	if err != nil || len(b) > maxBinary {
-		http.Error(w, "Document exceeds the 32 MiB proxy limit or could not be read. Open it in Paperless.", http.StatusBadGateway)
+	b, err := readDocumentBytes(res.Body, 32<<20)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	typ := http.DetectContentType(b)

@@ -206,6 +206,30 @@ func TestUploadTasksAndBinary(t *testing.T) {
 		t.Fatal("invalid canonical link")
 	}
 }
+func TestThumbnail(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.RequestURI() != "/api/documents/42/thumb/" {
+			t.Errorf("unexpected thumbnail request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		io.WriteString(w, "synthetic thumbnail")
+	})
+	res, err := c.Thumbnail(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(res.Body)
+	if err != nil || string(b) != "synthetic thumbnail" {
+		t.Fatalf("thumbnail body: %q, error: %v", b, err)
+	}
+	for _, id := range []int{0, -1} {
+		if _, err := c.Thumbnail(context.Background(), id); err == nil {
+			t.Fatalf("accepted invalid document ID %d", id)
+		}
+	}
+}
+
 func TestProbeSchema(t *testing.T) {
 	for _, tc := range []struct {
 		version, schema, api     string

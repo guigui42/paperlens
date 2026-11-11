@@ -95,6 +95,7 @@ type API interface {
 	Metadata(context.Context) (Vocabulary, error)
 	Search(context.Context, string, Filters, int) (Page, error)
 	Document(context.Context, int) (Document, error)
+	Thumbnail(context.Context, int) (*http.Response, error)
 	Binary(context.Context, int, bool) (*http.Response, error)
 	Upload(context.Context, string, string, io.Reader) (string, error)
 	Task(context.Context, string) (Task, error)
@@ -485,6 +486,14 @@ func (c *Client) Document(ctx context.Context, id int) (Document, error) {
 // DocumentURL is constructed exclusively from a server-side ID.
 func (c *Client) DocumentURL(id int) string {
 	return fmt.Sprintf("%s/documents/%d/details", c.base, id)
+}
+
+// Thumbnail returns the upstream raster preview; callers must close and bound its body.
+func (c *Client) Thumbnail(ctx context.Context, id int) (*http.Response, error) {
+	if id < 1 {
+		return nil, errors.New("invalid document ID")
+	}
+	return c.request(ctx, "GET", fmt.Sprintf("/api/documents/%d/thumb/", id), nil, "")
 }
 
 // Binary returns a response whose body the caller must close and bound.
