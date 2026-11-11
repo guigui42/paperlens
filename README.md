@@ -45,13 +45,23 @@ Demo uploads are in memory and disappear when the process restarts.
   date, boolean, integer, float and URL fields support exact matching. Select
   options are listed with their labels. Monetary and document-link fields are
   deliberately not offered as scalar filters.
-- PDF and PNG/JPEG previews through a same-origin, MIME-checked proxy. Archived
-  PDFs are used when Paperless provides them. Other formats offer download/open
-  in Paperless. The proxy has a 32 MiB limit.
+- Lazy-loaded document thumbnails directly in compact search results. Select a
+  document title or thumbnail to see its full matched excerpt and PDF or PNG/JPEG
+  preview without leaving your search. Full preview files load only on expansion
+  and are removed on collapse; the title is the single keyboard preview control,
+  and "Open full page" retains access to the standalone viewer.
+- Thumbnails and previews use a same-origin, MIME-checked proxy with a 2 MiB
+  thumbnail limit and a 32 MiB full-document limit. Paperless's WebP thumbnails
+  are supported; archived PDFs are used for full previews when available.
+  Missing thumbnails or failed inline previews leave the document actions
+  available. Other formats offer download/open in
+  Paperless. Embedded PDF display depends on the browser, especially on mobile;
+  download or open in Paperless if the viewer cannot display the document.
 - Manual single-file uploads with type/extension/size checks and restart-safe
   ingestion receipts. Uploads are never an AI tool.
-- Keyboard and mobile layouts, light/dark theme, local vendored scripts and a
-  CSP without `unsafe-inline` or `unsafe-eval`.
+- Keyboard and mobile layouts with neutral-gray light/dark themes and muted-blue
+  accents across search, uploads, receipts, and previews. Local vendored scripts
+  and a CSP without `unsafe-inline` or `unsafe-eval`.
 
 No existing-document edits, deletes, tagging, scanner control or deployment of
 your Paperless stack.

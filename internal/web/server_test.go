@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -161,6 +162,185 @@ func TestDocumentAndHealthRoutes(t *testing.T) {
 		})
 	}
 }
+
+type thumbnailAPI struct {
+	paperless.API
+	data []byte
+	err  error
+}
+
+func (a thumbnailAPI) Thumbnail(context.Context, int) (*http.Response, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+	return &http.Response{Body: io.NopCloser(bytes.NewReader(a.data))}, nil
+}
+
+type boundedBinaryAPI struct {
+	paperless.API
+	body *bytes.Reader
+}
+
+func (a boundedBinaryAPI) Thumbnail(context.Context, int) (*http.Response, error) {
+	return &http.Response{Body: io.NopCloser(a.body)}, nil
+}
+
+func (a boundedBinaryAPI) Binary(ctx context.Context, id int, _ bool) (*http.Response, error) {
+	return a.Thumbnail(ctx, id)
+}
+
+func TestDocumentProxySizeLimits(t *testing.T) {
+	h := newHarness(t)
+	api := h.app.api
+	for _, tc := range []struct {
+		name, path  string
+		size, limit int
+		status      int
+	}{
+		{"thumbnail at limit", "/thumbnail", 2 << 20, 2 << 20, 200},
+		{"thumbnail over limit", "/thumbnail", (2 << 20) + 4096, 2 << 20, 502},
+		{"preview above thumbnail limit", "/preview", (2 << 20) + 1, 32 << 20, 200},
+		{"preview at limit", "/preview", 32 << 20, 32 << 20, 200},
+		{"preview over limit", "/preview", (32 << 20) + 4096, 32 << 20, 502},
+		{"download at limit", "/download", 32 << 20, 32 << 20, 200},
+		{"download over limit", "/download", (32 << 20) + 4096, 32 << 20, 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := make([]byte, tc.size)
+			copy(data, "\x89PNG\r\n\x1a\n")
+			body := bytes.NewReader(data)
+			h.app.api = boundedBinaryAPI{API: api, body: body}
+			req := httptest.NewRequest(http.MethodGet, h.origin+"/documents/1"+tc.path, nil)
+			w := httptest.NewRecorder()
+			h.app.Handler().ServeHTTP(w, req)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d", w.Code, tc.status)
+			}
+			if tc.status == 200 {
+				if w.Body.Len() != tc.size {
+					t.Fatal("proxy truncated an allowed response")
+				}
+			} else if read := tc.size - body.Len(); read != tc.limit+1 {
+				t.Fatalf("proxy read %d bytes; should stop at %d", read, tc.limit+1)
+			}
+		})
+	}
+}
+
+func TestThumbnailProxy(t *testing.T) {
+	h := newHarness(t)
+	api := h.app.api
+	for _, tc := range []struct {
+		name, path, mime string
+		data             []byte
+		err              error
+		status           int
+	}{
+		{name: "webp", path: "/documents/1/thumbnail", data: []byte("RIFF\x10\x00\x00\x00WEBPVP8 \x04\x00\x00\x00test"), mime: "image/webp", status: 200},
+		{name: "png", path: "/documents/1/thumbnail", data: []byte("\x89PNG\r\n\x1a\nsynthetic"), mime: "image/png", status: 200},
+		{name: "jpeg", path: "/documents/1/thumbnail", data: []byte("\xff\xd8\xffsynthetic"), mime: "image/jpeg", status: 200},
+		{name: "html", path: "/documents/1/thumbnail", data: []byte("<html>not an image</html>"), status: 415},
+		{name: "svg", path: "/documents/1/thumbnail", data: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), status: 415},
+		{name: "pdf", path: "/documents/1/thumbnail", data: demo.PDF(), status: 415},
+		{name: "oversized", path: "/documents/1/thumbnail", data: bytes.Repeat([]byte("x"), (2<<20)+1), status: 502},
+		{name: "upstream failure", path: "/documents/1/thumbnail", err: errors.New("thumbnail unavailable"), status: 502},
+		{name: "invalid ID", path: "/documents/0/thumbnail", status: 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.app.api = thumbnailAPI{API: api, data: tc.data, err: tc.err}
+			req := httptest.NewRequest(http.MethodGet, h.origin+tc.path, nil)
+			w := httptest.NewRecorder()
+			h.app.Handler().ServeHTTP(w, req)
+			if w.Code != tc.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if tc.status == 200 && (w.Header().Get("Content-Type") != tc.mime || !bytes.Equal(w.Body.Bytes(), tc.data)) {
+				t.Fatal("thumbnail bytes or detected content type changed")
+			}
+			if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatal("thumbnail response lost privacy headers")
+			}
+		})
+	}
+}
+
+type documentPreviewAPI struct {
+	paperless.API
+	document paperless.Document
+	err      error
+}
+
+func (a documentPreviewAPI) Document(context.Context, int) (paperless.Document, error) {
+	return a.document, a.err
+}
+
+func TestInlineDocumentViewer(t *testing.T) {
+	h := newHarness(t)
+	api := h.app.api
+	archive := "archived.pdf"
+	for _, tc := range []struct {
+		name, mime, want string
+		archive          *string
+		err              error
+		status           int
+	}{
+		{name: "pdf", mime: "application/pdf", want: `title="PDF preview"`, status: 200},
+		{name: "archived PDF", mime: "image/tiff", archive: &archive, want: `title="PDF preview"`, status: 200},
+		{name: "png", mime: "image/png", want: `data-document-image`, status: 200},
+		{name: "jpeg", mime: "image/jpeg", want: `data-document-image`, status: 200},
+		{name: "unsupported", mime: "text/html", want: "does not have a safe inline preview", status: 200},
+		{name: "metadata failure", err: errors.New("document permission denied"), want: "document permission denied", status: 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.app.api = documentPreviewAPI{API: api, document: paperless.Document{
+				ID: 1, Title: "Test <document>", MIME: tc.mime, ArchivedFilename: tc.archive,
+			}, err: tc.err}
+			req := httptest.NewRequest(http.MethodGet, h.origin+"/documents/1", nil)
+			req.Header.Set("X-Paperlens-Preview", "inline")
+			w := httptest.NewRecorder()
+			h.app.Handler().ServeHTTP(w, req)
+			body := w.Body.String()
+			if w.Code != tc.status || !strings.Contains(body, tc.want) {
+				t.Fatalf("status %d: %s", w.Code, body)
+			}
+			if strings.Contains(body, "<html") || strings.Contains(body, "topbar") || strings.Contains(body, "Test <document>") {
+				t.Fatal("inline viewer contains page chrome or unescaped metadata")
+			}
+			if tc.status == 200 {
+				full := httptest.NewRecorder()
+				req.Header.Del("X-Paperlens-Preview")
+				h.app.Handler().ServeHTTP(full, req)
+				if !strings.Contains(full.Body.String(), "<html") || !strings.Contains(full.Body.String(), tc.want) {
+					t.Fatal("standalone viewer no longer includes the shared media")
+				}
+			}
+		})
+	}
+}
+
+func TestResultsKeepEvidenceWithoutEagerPreviewLoads(t *testing.T) {
+	h := newHarness(t)
+	quote := "First line\n\n\n\n<script>untrusted text</script>\n\nFinal line"
+	w := httptest.NewRecorder()
+	h.app.render(w, "results", page{
+		Job: job{State: "done"},
+		Results: []search.Result{{
+			Document: paperless.Document{ID: 1, Title: "Example", MIME: "application/pdf"},
+			Quote:    quote,
+		}},
+	})
+	body := w.Body.String()
+	if !strings.Contains(body, "First line\n\n\n\n&lt;script&gt;untrusted text&lt;/script&gt;\n\nFinal line") {
+		t.Fatal("source evidence was changed or not escaped")
+	}
+	if !strings.Contains(body, `src="/documents/1/thumbnail"`) || !strings.Contains(body, `loading="lazy"`) {
+		t.Fatal("result thumbnail missing")
+	}
+	if strings.Contains(body, `src="/documents/1/preview"`) || strings.Contains(body, "<iframe") {
+		t.Fatal("results eagerly embed full documents")
+	}
+}
+
 func (h *harness) upload(t *testing.T, csrf, nonce, title string, data []byte) (int, string) {
 	t.Helper()
 	var buf bytes.Buffer

@@ -7,6 +7,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"io"
 	"net/http"
 	"sort"
@@ -142,6 +146,31 @@ func (a *Archive) Document(ctx context.Context, id int) (paperless.Document, err
 
 // DocumentURL never points to a real household service.
 func (a *Archive) DocumentURL(id int) string { return fmt.Sprintf("/documents/%d", id) }
+
+// Thumbnail draws a fictional page, not a conversion of an uploaded document.
+func (a *Archive) Thumbnail(ctx context.Context, id int) (*http.Response, error) {
+	if _, err := a.Document(ctx, id); err != nil {
+		return nil, err
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 220, 304))
+	draw.Draw(img, img.Bounds(), image.NewUniform(color.RGBA{250, 251, 252, 255}), image.Point{}, draw.Src)
+	ink := image.NewUniform(color.RGBA{49, 95, 133, 255})
+	muted := image.NewUniform(color.RGBA{178, 189, 199, 255})
+	draw.Draw(img, image.Rect(24, 28, 54, 46), ink, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(24, 66, 174, 73), ink, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(24, 82, 124, 87), muted, image.Point{}, draw.Src)
+	for line := range 12 {
+		width := 172 - ((line+id)%4)*19
+		y := 112 + line*11
+		draw.Draw(img, image.Rect(24, y, width, y+3), muted, image.Point{}, draw.Src)
+	}
+	draw.Draw(img, image.Rect(24, 270, 84, 273), muted, image.Point{}, draw.Src)
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		return nil, fmt.Errorf("encode synthetic thumbnail: %w", err)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: io.NopCloser(bytes.NewReader(b.Bytes()))}, nil
+}
 
 // Binary serves a tiny generated PDF or a previously uploaded synthetic file.
 func (a *Archive) Binary(ctx context.Context, id int, _ bool) (*http.Response, error) {
