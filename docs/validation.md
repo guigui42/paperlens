@@ -8,7 +8,7 @@ public record. Hosted relevance evaluations use only the synthetic archive.
 
 - Go 1.27.3 compilation, deterministic contracts, `go vet`, configured
   golangci-lint 2.15.0, and race-detector tests.
-- Paperless 3.3 and 3.4.2/API v10 contract source checked for version headers, query/filter
+- Paperless 3.3, 3.4.2 and 3.5.0 API v10 contract source checked for query/filter
   parameters, metadata pagination, upload UUIDs, and paginated ingestion tasks.
   HTTP fixtures cover denied authentication, rate limiting, redirects,
   malformed/bounded responses, filters, upload multipart data and task IDs.

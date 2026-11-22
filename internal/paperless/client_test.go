@@ -236,15 +236,11 @@ func TestProbeSchema(t *testing.T) {
 		missingFilter, supported bool
 	}{
 		{"3.3.0", "6.0.0", "10", false, true},
-		{"3.3.0", "6.0.0 (10)", "10", false, true},
 		{"3.4.2", "6.0.0 (10)", "10", false, true},
-		{"3.4.2", "6.0.0", "10", false, true},
-		{"3.4.2", "6.0.0 (9)", "10", false, false},
-		{"3.4.2", "6.0.0 (10)", "9", false, false},
-		{"3.4.2", "6.0.0 (10)", "10", true, false},
-		{"3.4.1", "6.0.0 (10)", "10", false, false},
-		{"3.5.0", "6.0.0 (10)", "10", false, false},
-		{"3.2.0", "6.0.0", "10", false, false},
+		{"3.5.0", "6.0.0 (10)", "10", false, true},
+		{"4.0.0", "7.0.0 (11)", "11", false, true},
+		{"", "", "", false, true},
+		{"3.5.0", "6.0.0 (10)", "10", true, false},
 	} {
 		t.Run(fmt.Sprintf("%s/%s/%s/missing=%t", tc.version, tc.schema, tc.api, tc.missingFilter), func(t *testing.T) {
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
