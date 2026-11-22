@@ -133,8 +133,44 @@ func TestBudgetsAndDeduplication(t *testing.T) {
 		return search.Ranking{Results: []search.Pick{}}, nil
 	}))
 	out, err = e.Run(context.Background(), "home insurance", paperless.Filters{}, false, nil)
-	if err != nil || out.Candidates != 4 || out.Calls != 3 {
+	// One original, two relaxed ("insurance", "home") and two model searches.
+	if err != nil || out.Candidates != 4 || out.Calls != 5 {
 		t.Fatal(out, err)
+	}
+}
+
+type queryLog struct {
+	paperless.API
+	queries []string
+}
+
+func (q *queryLog) Search(ctx context.Context, s string, f paperless.Filters, n int) (paperless.Page, error) {
+	q.queries = append(q.queries, s)
+	return q.API.Search(ctx, s, f, n)
+}
+
+func TestRelaxedQueriesKeepModelSearches(t *testing.T) {
+	api := &queryLog{API: demo.New()}
+	var modelCalls int
+	e := &search.Engine{API: api, Limits: search.Limits{Searches: 4, Candidates: 40, Excerpts: 6, Characters: 2500},
+		Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			for _, s := range []string{"a", "b", "c"} {
+				if _, err := tools.Search(ctx, s); err == nil {
+					modelCalls++
+				}
+			}
+			return search.Ranking{Results: []search.Pick{}}, nil
+		})}
+	if _, err := e.Run(context.Background(), "latest service militaire", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"latest service militaire", "service militaire", "a", "b"}
+	if strings.Join(api.queries, "|") != strings.Join(want, "|") || modelCalls != 2 {
+		t.Fatalf("queries %q, model calls %d", api.queries, modelCalls)
+	}
+	api.queries = nil
+	if _, err := e.Run(context.Background(), "latest service militaire", paperless.Filters{}, true, nil); err != nil || len(api.queries) != 1 {
+		t.Fatalf("keyword-only search must not relax: %q %v", api.queries, err)
 	}
 }
 func TestLatestAndMentionedYear(t *testing.T) {

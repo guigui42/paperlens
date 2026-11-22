@@ -379,6 +379,21 @@ PAPERLENS_DEMO=true \
   go run ./cmd/evaluate -live
 ```
 
+The synthetic corpus scores 100% even with plain keyword search, so it cannot
+show whether a search change helps. Two ungated modes report per-case results
+(retrieved, rank, Paperless calls and AI credits) for iterating on relevance:
+
+- `-set hard` uses fictional queries that strict keyword search misses, with
+  Paperless-style matching where every query word must appear. Some cases are
+  marked `holdout` and are scored separately.
+- `-private labels.json` runs your own labelled queries
+  (`[{"query":"…","expected":123,"holdout":false}]`, `expected` 0 for no match)
+  against the configured `PAPERLESS_URL`. Keep the file out of git, for example
+  under `.state/`. With `-live`, matching document text is sent to Copilot, as in
+  normal AI search.
+
+Both modes work with the fake agent (free, retrieval only) or `-live`.
+
 See [validation results and remaining boundaries](docs/validation.md) and the
 [approved implementation plan](plan.md). UI prior art:
 [scan-hub](https://github.com/guigui42/scan-hub#web-ui).

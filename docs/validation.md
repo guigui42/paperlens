@@ -107,6 +107,32 @@ Manual permission mode was confirmed before inference, and the isolated runtime
 directory was empty afterward. This is a new hosted run, not a relabelled result
 from the previous runtime pair; the same synthetic-baseline limitations apply.
 
+## Hard synthetic set and relaxed queries
+
+Paperless full-text search only returns documents containing every query word,
+so "latest facture" or a word the document never uses returns nothing. The
+original synthetic archive scores any matching word, which hid this. `-set hard`
+adds 17 fictional cases (14 answerable, 5 of them holdout; 3 no-match) under
+strict all-words matching, where plain keyword search finds none of the
+answerable documents.
+
+Relaxed queries (Paperlens retries without filler words and with the longest
+distinct words alone, keeping at least two searches for the model) plus a
+prompt that explains the all-words rule were compared with the previous
+pipeline in six interleaved live pairs, `gpt-6-luna` at low effort, CLI 1.0.109:
+
+| Measure | Before | After |
+|---|---|---|
+| Hard dev Hit@3 (of 9), range | 2–7 | 9 |
+| Hard holdout Hit@3 (of 5), range | 0–3 | 4–5 |
+| Correct no-match decisions | 3/3 every run | 3/3 every run |
+| AI credits per search, mean | 0.0346 | 0.0350 |
+| Latency per search, p50 / p90 | 8.9 s / 10.3 s | 7.7 s / 11.2 s |
+
+A separately authorized private labelled set on a real archive moved in the
+same direction; its queries and documents are not published. Short acronyms
+(three letters or fewer) are still not expanded reliably.
+
 ## In-app WebKit origin regression
 
 The real in-app browser reproduced a rejected HTMX submission at the correct

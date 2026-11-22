@@ -195,10 +195,17 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		}()
 	}
 	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]bool{}}
+	var relaxed []string
 	if useAI && e.Limits.Searches > 1 {
 		// Keep room for model expansions so a broad original query cannot
 		// occupy every candidate slot before they run.
 		j.reserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+		// Paperless requires every query word, so a document missing one word
+		// (or a filler word like "latest") is never retrieved. Relaxed queries
+		// get their own slots and always leave the model two searches.
+		relaxed = relaxations(query)
+		relaxed = relaxed[:max(0, min(len(relaxed), e.Limits.Searches-3))]
+		j.reserve = min(e.Limits.Candidates-1, j.reserve+len(relaxed)*relaxedPage)
 	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
@@ -226,6 +233,14 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			stage("Finding and checking evidence")
 		}
 		mark = time.Now()
+		for _, q := range relaxed {
+			if _, err := j.search(ctx, q, relaxedPage); err != nil {
+				if ctx.Err() != nil {
+					return Output{}, ctx.Err()
+				}
+				break
+			}
+		}
 		j.prefetch(ctx, query)
 		prefetchTime = time.Since(mark)
 		mark = time.Now()
@@ -315,6 +330,15 @@ func (j *job) Lookup() paperless.Vocabulary {
 	return v
 }
 func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
+	return j.search(ctx, query, 0)
+}
+
+// relaxedPage bounds how many top documents each relaxed query may add.
+const relaxedPage = 5
+
+// search runs one Paperless query. page > 0 keeps only that many top results
+// and does not mark the job limited, since truncation is intended.
+func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -335,11 +359,15 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 		capacity = max(1, capacity-j.reserve)
 	}
 	j.calls++
-	p, err := j.api.Search(ctx, query, j.filters, capacity)
+	size := capacity
+	if page > 0 {
+		size = min(page, capacity)
+	}
+	p, err := j.api.Search(ctx, query, j.filters, size)
 	if err != nil {
 		return nil, err
 	}
-	if p.Next != nil || p.Count > len(p.Results) {
+	if page == 0 && (p.Next != nil || p.Count > len(p.Results)) {
 		j.limited = true
 	}
 	if j.queries == nil {
@@ -517,6 +545,41 @@ var accentFold = strings.NewReplacer("é", "e", "è", "e", "ê", "e", "ë", "e",
 func Latest(q string) bool {
 	q = Fold(q)
 	return strings.Contains(q, "latest") || strings.Contains(q, "newest") || strings.Contains(q, "dernier") || strings.Contains(q, "recent")
+}
+
+const filler = " latest newest recent dernier derniere derniers dernieres find trouve trouver my mon ma mes the a an of for to in on with and or la le les l de du des d un une et ou pour avec en au aux sur "
+
+// relaxations returns at most two shorter queries for a multi-word query: the
+// query without filler words, then its longest non-numeric words alone.
+func relaxations(q string) []string {
+	all := strings.FieldsFunc(Fold(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	var kept []string
+	for _, w := range all {
+		if !strings.Contains(filler, " "+w+" ") {
+			kept = append(kept, w)
+		}
+	}
+	var out []string
+	if len(kept) > 0 && len(kept) < len(all) {
+		out = append(out, strings.Join(kept, " "))
+	}
+	if len(kept) < 2 {
+		return out
+	}
+	var terms []string
+	for _, w := range kept {
+		if len([]rune(w)) >= 4 && strings.ContainsFunc(w, unicode.IsLetter) && !slices.Contains(terms, w) {
+			terms = append(terms, w)
+		}
+	}
+	sort.SliceStable(terms, func(a, b int) bool { return len([]rune(terms[a])) > len([]rune(terms[b])) })
+	for _, t := range terms {
+		if len(out) >= 2 {
+			break
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // TitleScore protects direct title/filename relevance from incidental OCR hits.
