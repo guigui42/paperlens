@@ -374,3 +374,27 @@ func TestNoMatchAfterTruncatedRelaxedQueryIsLimited(t *testing.T) {
 		}
 	}
 }
+
+func TestUnselectedCandidatesStayReachable(t *testing.T) {
+	pickFirst := agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+		if _, err := tools.Excerpt(ctx, 1); err != nil {
+			return search.Ranking{}, err
+		}
+		return search.Ranking{Results: []search.Pick{{ID: 1, Quote: "Home insurance certificate 2025", Strength: "strong"}}}, nil
+	})
+	out, err := engine(pickFirst).Run(context.Background(), "home insurance", paperless.Filters{}, false, nil)
+	if err != nil || out.Mode != "Evidence-ranked search" {
+		t.Fatal(out, err)
+	}
+	others := map[int]bool{}
+	for _, r := range out.Others {
+		others[r.Document.ID] = true
+	}
+	if others[1] || !others[2] || len(out.Results)+len(out.Others) != out.Candidates {
+		t.Fatalf("others %v, results %d, candidates %d", others, len(out.Results), out.Candidates)
+	}
+	out, err = engine(pickFirst).Run(context.Background(), "home insurance", paperless.Filters{}, true, nil)
+	if err != nil || out.Others != nil {
+		t.Fatal("keyword results already list every candidate", out.Others, err)
+	}
+}

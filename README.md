@@ -52,6 +52,10 @@ Demo uploads are in memory and disappear when the process restarts.
 - Live Paperless retrieval, French/English query expansion through Copilot,
   rank-based deduplication, bounded excerpts and strictly validated result IDs
   and quotes. Titles, dates, actions and URLs always come from Paperless.
+- After an AI search, "Show N other candidates" lists every retrieved document
+  the AI did not select, as unverified keyword matches from the same snapshot.
+  It makes no extra Paperless or AI calls, so a document the model missed is
+  still one click away.
 - Immutable issue-date, correspondent, type, tag and scalar custom-field
   filters, including a Person field if the archive defines one. Text, select,
   date, boolean, integer, float and URL fields support exact matching. Select

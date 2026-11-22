@@ -104,6 +104,9 @@ type Output struct {
 	Candidates, Calls int
 	Limited           bool
 	Vocabulary        paperless.Vocabulary
+	// Others are retrieved candidates an evidence-ranked search did not select,
+	// in keyword order, so a document the model missed stays reachable.
+	Others []Result
 	// Usage is set on every return from Run, including errors.
 	Usage Usage
 }
@@ -321,6 +324,16 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			for _, r := range j.fallback(query) {
 				if r.Excluded {
 					out.Results = append(out.Results, r)
+				}
+			}
+			shown := map[int]bool{}
+			for _, r := range out.Results {
+				shown[r.Document.ID] = true
+			}
+			for _, r := range j.fallback(query) {
+				if !shown[r.Document.ID] {
+					r.Reason = "Retrieved but not selected by AI. Keyword match only; not checked."
+					out.Others = append(out.Others, r)
 				}
 			}
 		}

@@ -54,20 +54,14 @@ data-search-message="{{if .Running}}Search in progress: {{.Job.State}}.{{else if
 {{if .Job.Output.Notice}}<div class="notice">{{.Job.Output.Notice}}</div>{{end}}
 {{if .Job.Output.Limited}}<div class="notice">Retrieval limits reached. These results are not exhaustive. Refine your query or filters.</div>{{end}}
 {{if not .Results}}<div class="empty"><h3>No matching evidence found.</h3><p>Try a document title, sender, or a more specific phrase. Missing OCR or no keyword overlap can hide a document. Your filters have not been relaxed.</p></div>{{end}}
-{{range .Results}}<article class="result-card" aria-labelledby="document-title-{{.Document.ID}}" data-document-title="{{.Document.Title}}">
-<a class="result-thumbnail" href="/documents/{{.Document.ID}}" data-inline-preview tabindex="-1" aria-hidden="true">
-<span class="thumbnail-fallback" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28"><path d="M5 2h10l4 4v16H5zM14 2v5h5M8 11h8M8 15h8M8 19h5"/></svg><span data-thumbnail-status>Loading preview</span></span>
-<img src="/documents/{{.Document.ID}}/thumbnail" width="220" height="304" loading="lazy" decoding="async" alt="" data-thumbnail>
-</a>
-<div class="result-content"><h3 id="document-title-{{.Document.ID}}"><a href="/documents/{{.Document.ID}}" data-inline-preview>{{.Document.Title}}</a></h3>
-<div class="result-meta"><span>{{date .Document.Created}}</span>{{with term .Document.Correspondent $.Vocab.Correspondents}}<span>{{.}}</span>{{end}}{{with term .Document.DocumentType $.Vocab.Types}}<span>{{.}}</span>{{end}}{{if .Excluded}}<span class="badge">Not sent to AI</span>{{else if .Weak}}<span class="badge">Possible match</span>{{end}}</div>
-<blockquote class="result-excerpt">{{.Quote}}</blockquote><p class="reason">{{.Reason}}</p>
-<div class="result-actions"><a href="/documents/{{.Document.ID}}/download">Download original</a><a href="{{docURL .Document.ID}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></div></div>
-<div id="viewer-{{.Document.ID}}" class="inline-preview" role="region" aria-label="Preview of {{.Document.Title}}" hidden>
-<div class="viewer-toolbar"><a href="/documents/{{.Document.ID}}">Open full page</a><button type="button" data-close-preview aria-label="Close preview of {{.Document.Title}}">Close preview</button></div>
-<div class="viewer-content"></div>
-</div></article>{{end}}
-{{if or .HasNext .HasPrevious}}<nav class="pagination" aria-label="Results pages">{{if .HasPrevious}}<a href="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-get="/jobs/{{.Job.ID}}?page={{.Previous}}" hx-target="#results" hx-swap="outerHTML">Previous</a>{{end}}{{if .HasNext}}<a href="/jobs/{{.Job.ID}}?page={{.Next}}" hx-get="/jobs/{{.Job.ID}}?page={{.Next}}" hx-target="#results" hx-swap="outerHTML">Next</a>{{end}}<span>Stable snapshot · kept up to 10 minutes; oldest completed searches may expire sooner when full</span></nav>{{end}}
+{{range .Results}}{{template "card" (card . $.Vocab)}}{{end}}
+{{if or .HasNext .HasPrevious}}<nav class="pagination" aria-label="Results pages">{{if .HasPrevious}}<a href="/jobs/{{.Job.ID}}?page={{.Previous}}{{if .ShowOthers}}&amp;candidates=1{{end}}" hx-get="/jobs/{{.Job.ID}}?page={{.Previous}}{{if .ShowOthers}}&amp;candidates=1{{end}}" hx-target="#results" hx-swap="outerHTML">Previous</a>{{end}}{{if .HasNext}}<a href="/jobs/{{.Job.ID}}?page={{.Next}}{{if .ShowOthers}}&amp;candidates=1{{end}}" hx-get="/jobs/{{.Job.ID}}?page={{.Next}}{{if .ShowOthers}}&amp;candidates=1{{end}}" hx-target="#results" hx-swap="outerHTML">Next</a>{{end}}<span>Stable snapshot · kept up to 10 minutes; oldest completed searches may expire sooner when full</span></nav>{{end}}
+{{with .Job.Output.Others}}<section class="other-candidates" aria-labelledby="other-candidates-heading">
+{{if $.ShowOthers}}<div class="other-candidates-heading"><h3 id="other-candidates-heading">{{len .}} other candidates the AI did not select</h3><a href="/jobs/{{$.Job.ID}}?page={{$.Page}}" hx-get="/jobs/{{$.Job.ID}}?page={{$.Page}}" hx-target="#results" hx-swap="outerHTML">Hide</a></div>
+<p class="other-candidates-help">Paperless returned these for your query or its expansions. They are keyword matches only; the AI did not confirm them.</p>
+{{range .}}{{template "card" (card . $.Vocab)}}{{end}}
+{{else}}<a id="other-candidates-heading" class="show-candidates" href="/jobs/{{$.Job.ID}}?page={{$.Page}}&amp;candidates=1" hx-get="/jobs/{{$.Job.ID}}?page={{$.Page}}&amp;candidates=1" hx-target="#results" hx-swap="outerHTML">Show {{len .}} other candidates the AI did not select</a>{{end}}
+</section>{{end}}
 {{end}}</section>{{end}}
 
 {{define "upload"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/">← Back to search</a><h1>Upload a document</h1><p class="lede">Add one file. Paperless handles OCR and classification.</p>
@@ -96,3 +90,17 @@ data-search-message="{{if .Running}}Search in progress: {{.Job.State}}.{{else if
 {{end}}
 {{define "preview"}}{{template "head" .}}<main id="main" class="preview-page"><a class="back" href="/">← Back to search</a><div class="preview-heading"><div><h1>{{.Document.Title}}</h1><p>{{date .Document.Created}}</p></div><div class="preview-actions"><a class="button primary" href="/documents/{{.Document.ID}}/download">Download original</a><a href="{{.PaperlessURL}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></div></div>
 {{template "document-viewer" .}}</main>{{template "foot" .}}{{end}}
+
+{{define "card"}}<article class="result-card" aria-labelledby="document-title-{{.Document.ID}}" data-document-title="{{.Document.Title}}">
+<a class="result-thumbnail" href="/documents/{{.Document.ID}}" data-inline-preview tabindex="-1" aria-hidden="true">
+<span class="thumbnail-fallback" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28"><path d="M5 2h10l4 4v16H5zM14 2v5h5M8 11h8M8 15h8M8 19h5"/></svg><span data-thumbnail-status>Loading preview</span></span>
+<img src="/documents/{{.Document.ID}}/thumbnail" width="220" height="304" loading="lazy" decoding="async" alt="" data-thumbnail>
+</a>
+<div class="result-content"><h3 id="document-title-{{.Document.ID}}"><a href="/documents/{{.Document.ID}}" data-inline-preview>{{.Document.Title}}</a></h3>
+<div class="result-meta"><span>{{date .Document.Created}}</span>{{with term .Document.Correspondent $.Vocab.Correspondents}}<span>{{.}}</span>{{end}}{{with term .Document.DocumentType $.Vocab.Types}}<span>{{.}}</span>{{end}}{{if .Excluded}}<span class="badge">Not sent to AI</span>{{else if .Weak}}<span class="badge">Possible match</span>{{end}}</div>
+<blockquote class="result-excerpt">{{.Quote}}</blockquote><p class="reason">{{.Reason}}</p>
+<div class="result-actions"><a href="/documents/{{.Document.ID}}/download">Download original</a><a href="{{docURL .Document.ID}}" target="_blank" rel="noopener noreferrer">Open in Paperless ↗</a></div></div>
+<div id="viewer-{{.Document.ID}}" class="inline-preview" role="region" aria-label="Preview of {{.Document.Title}}" hidden>
+<div class="viewer-toolbar"><a href="/documents/{{.Document.ID}}">Open full page</a><button type="button" data-close-preview aria-label="Close preview of {{.Document.Title}}">Close preview</button></div>
+<div class="viewer-content"></div>
+</div></article>{{end}}

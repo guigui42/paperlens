@@ -203,6 +203,11 @@ footer {
 .empty { padding: 28px; border: 1px dashed var(--cp-border-strong); border-radius: 8px; background: var(--cp-surface); }
 .empty h3 { margin-top: 0; }
 .empty p { max-width: 70ch; margin-bottom: 0; color: var(--cp-text-muted); font-size: 14px; }
+.other-candidates { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--cp-border); }
+.other-candidates-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.other-candidates-heading h3 { margin: 0; font-size: 16px; }
+.other-candidates-heading a, .show-candidates { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
+.other-candidates-help { margin: 4px 0 0; font-size: 13px; color: var(--cp-text-muted); }
 .pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; margin-top: 20px; font-size: 14px; }
 .pagination a { display: inline-flex; align-items: center; min-height: 44px; }
 .pagination span { flex: 1; min-width: 200px; margin-left: auto; font-size: 13px; color: var(--cp-text-muted); }

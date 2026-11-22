@@ -496,3 +496,35 @@ func TestJobQueueCancelExpiryAndCleanup(t *testing.T) {
 		t.Fatal("expired snapshot retained")
 	}
 }
+
+func TestShowOtherCandidates(t *testing.T) {
+	h := newHarness(t)
+	h.app.jobs.engine.Agent = agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+		if _, err := tools.Excerpt(ctx, 1); err != nil {
+			return search.Ranking{}, err
+		}
+		return search.Ranking{Results: []search.Pick{{ID: 1, Quote: "Home insurance certificate 2025", Strength: "strong"}}}, nil
+	})
+	_, home := h.request(t, "GET", "/", "", "")
+	_, body := h.request(t, "POST", "/search", url.Values{"q": {"home insurance"}, "mode": {"ai"}, "csrf": {hidden(t, home, "csrf")}}.Encode(), "application/x-www-form-urlencoded")
+	id := regexp.MustCompile(`hx-get="/jobs/([^"]+)"`).FindStringSubmatch(body)[1]
+	for deadline := time.Now().Add(2 * time.Second); !strings.Contains(body, "Documents for"); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("search did not finish", body)
+		}
+		_, body = h.request(t, "GET", "/jobs/"+id, "", "")
+	}
+	if !strings.Contains(body, "candidates=1") || strings.Contains(body, `id="document-title-2"`) {
+		t.Fatal("unselected candidates should be collapsed behind a link", body)
+	}
+	_, body = h.request(t, "GET", "/jobs/"+id+"?candidates=1", "", "")
+	if !strings.Contains(body, `id="document-title-2"`) || !strings.Contains(body, "not selected by AI") || strings.Count(body, `id="document-title-1"`) != 1 {
+		t.Fatal("expanded candidates missing or duplicated", body)
+	}
+}
+
+type agentFunc func(context.Context, string, search.Tools) (search.Ranking, error)
+
+func (f agentFunc) Rank(c context.Context, q string, t search.Tools) (search.Ranking, error) {
+	return f(c, q, t)
+}
