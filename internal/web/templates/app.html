@@ -1,6 +1,15 @@
 {{define "head"}}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{.Title}} · Document search</title>
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#22282e" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icons/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Paperlens">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <script src="/static/app.js"></script>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/vendor/htmx-4.0.1.min.js" defer></script>
@@ -79,6 +88,8 @@ data-search-message="{{if .Running}}Search in progress: {{.Job.State}}.{{else if
 {{template "upload-result" .}}
 {{if .Receipts}}<h2>Recent uploads in this browser</h2><ul class="receipt-list">{{range .Receipts}}<li><a href="/uploads/{{.ID}}">{{.State}}</a><time>{{.Created.Format "02 Jan 15:04"}}</time></li>{{end}}</ul>{{end}}
 </main>{{template "foot" .}}{{end}}
+{{define "offline"}}{{template "head" .}}<main id="main" class="narrow"><h1>You're offline.</h1><p class="lede">Paperlens needs a connection to your archive. Documents are never saved on this device for offline use.</p>
+<p class="offline-actions"><a class="button primary" href="/">Try again</a></p></main>{{template "foot" .}}{{end}}
 {{define "receipt"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/upload">← Uploads</a><h1>Upload status</h1>{{template "upload-result" .}}</main>{{template "foot" .}}{{end}}
 {{define "upload-result"}}<div id="upload-result" aria-live="polite" class="upload-status" {{if eq .Receipt.State "processing"}}hx-get="/uploads/{{.Receipt.ID}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
 {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}

@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -494,5 +495,82 @@ func TestJobQueueCancelExpiryAndCleanup(t *testing.T) {
 	j.mu.Unlock()
 	if _, ok := j.get(first.ID, "a"); ok {
 		t.Fatal("expired snapshot retained")
+	}
+}
+
+func TestInstallableAppShell(t *testing.T) {
+	h := newHarness(t)
+	get := func(path string) (*http.Response, string) {
+		t.Helper()
+		res, err := http.Get(h.origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != 200 {
+			t.Fatal(path, res.StatusCode, string(b))
+		}
+		return res, string(b)
+	}
+
+	res, body := get("/manifest.webmanifest")
+	if res.Header.Get("Content-Type") != "application/manifest+json" {
+		t.Fatal(res.Header.Get("Content-Type"))
+	}
+	var m struct {
+		Name     string `json:"name"`
+		StartURL string `json:"start_url"`
+		Scope    string `json:"scope"`
+		Display  string `json:"display"`
+		Icons    []struct {
+			Src     string `json:"src"`
+			Purpose string `json:"purpose"`
+		} `json:"icons"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Name != "Paperlens" || m.StartURL != "/" || m.Scope != "/" || m.Display != "standalone" {
+		t.Fatalf("manifest %+v", m)
+	}
+	purposes := map[string]bool{}
+	for _, icon := range m.Icons {
+		purposes[icon.Purpose] = true
+		get(icon.Src)
+	}
+	if !purposes["any"] || !purposes["maskable"] {
+		t.Fatal("manifest needs any and maskable icons")
+	}
+	get("/static/icons/apple-touch-icon.png")
+
+	res, sw := get("/sw.js")
+	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/javascript") {
+		t.Fatal(res.Header.Get("Content-Type"))
+	}
+	if strings.Contains(sw, "__PAPERLENS_") || !strings.Contains(sw, `"/static/app.css"`) || !strings.Contains(sw, `"/static/icons/icon-192.png"`) {
+		t.Fatal("service worker shell not rendered", sw)
+	}
+	if regexp.MustCompile(`"/(documents|jobs|search|upload)`).MatchString(sw) {
+		t.Fatal("service worker precaches private routes")
+	}
+
+	res, body = get("/offline")
+	if !strings.Contains(body, "offline") || strings.Contains(body, `name="csrf"`) || len(res.Cookies()) != 0 {
+		t.Fatal("offline page must be cacheable without identity", res.Cookies(), body)
+	}
+	csp := res.Header.Get("Content-Security-Policy")
+	if strings.Contains(csp, "unsafe-") || !strings.Contains(csp, "manifest-src 'self'") || !strings.Contains(csp, "worker-src 'self'") {
+		t.Fatal(csp)
+	}
+
+	_, home := get("/")
+	for _, tag := range []string{`rel="manifest" href="/manifest.webmanifest"`, `rel="apple-touch-icon"`, `name="theme-color"`, `viewport-fit=cover`} {
+		if !strings.Contains(home, tag) {
+			t.Fatal("missing head tag", tag)
+		}
 	}
 }

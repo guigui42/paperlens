@@ -4,7 +4,22 @@
     ? param
     : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.setAttribute("data-theme", theme);
+  syncThemeColor(theme);
 })();
+
+// Keeps the installed app's status bar in step with the toggled theme.
+function syncThemeColor(theme) {
+  const color = theme === "dark" ? "#22282e" : "#ffffff";
+  document.querySelectorAll('meta[name="theme-color"]').forEach(meta => meta.setAttribute("content", color));
+}
+
+// Service workers need a secure context (HTTPS or localhost). Over plain HTTP
+// the app still installs from the manifest, just without the offline page.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+  });
+}
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("paperlens", () => ({
@@ -12,6 +27,7 @@ document.addEventListener("alpine:init", () => {
     uploadError: "",
     toggleTheme() {
       document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      syncThemeColor(document.documentElement.dataset.theme);
     },
     get dropClass() { return this.dragging ? "dragging" : ""; },
     dragOver() { this.dragging = true; },

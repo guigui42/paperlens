@@ -74,6 +74,8 @@ Demo uploads are in memory and disappear when the process restarts.
 - Keyboard and mobile layouts with neutral-gray light/dark themes and muted-blue
   accents across search, uploads, receipts, and previews. Local vendored scripts
   and a CSP without `unsafe-inline` or `unsafe-eval`.
+- Installable on iPhone and Android home screens, with an offline notice and no
+  offline copies of documents. See [Install on your phone](#install-on-your-phone).
 
 No existing-document edits, deletes, tagging, scanner control or deployment of
 your Paperless stack.
@@ -348,6 +350,45 @@ configured Host. The example is not a household-stack deployment.
 `/healthz` checks the HTTP process. `/readyz` checks access to the metadata
 vocabulary (subject to its short cache). Copilot failures degrade search rather
 than taking keyword search offline.
+
+## Install on your phone
+
+Paperlens is an installable web app: it ships a
+[web app manifest](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable),
+home-screen icons and a small service worker. Install it from the exact address
+in `PAPERLENS_ORIGIN`; other hosts are rejected.
+
+- **iPhone (Safari):** open Paperlens, tap Share, then **Add to Home Screen**
+  ([Apple guide](https://support.apple.com/guide/iphone/bookmark-a-website-iph42ab2f3a7/ios)).
+  It opens full screen without browser bars, over HTTP or HTTPS.
+- **Android (Chrome):** open Paperlens, then the menu, then **Install app**
+  (or **Add to Home screen**). Chrome only offers a real install over HTTPS
+  ([install criteria](https://web.dev/articles/install-criteria)); over plain
+  HTTP you get a browser shortcut instead.
+
+HTTPS matters because service workers only run in a
+[secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)
+(HTTPS, `localhost` or `127.0.0.1`). Over plain LAN HTTP, Paperlens skips the
+service worker and everything else still works. To get HTTPS on a private
+network, put a [reverse proxy such as Caddy](https://caddyserver.com/docs/quick-starts/reverse-proxy)
+in front, or use [Tailscale Serve](https://tailscale.com/kb/1312/serve), and set
+`PAPERLENS_ORIGIN` to the resulting `https://` address.
+
+The [service worker](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API)
+caches only the app shell: stylesheet, scripts, icons and an offline notice.
+It never stores the home page (it carries a CSRF token and archive metadata),
+documents, thumbnails, previews, downloads, search results, upload receipts or
+any form submission. Pages always come from the network first. Installing the
+app adds no offline copy of your archive, but files you download, the Recent
+searches list in `localStorage`, and anything the browser or OS keeps on its
+own (such as app-switcher snapshots) still live on the phone. Offline, it shows
+"You're offline" instead of a browser error. The cache is replaced on each
+release. Open in Paperless links still open in the browser, outside the app.
+
+The icons are generated from the header logo by `scripts/icons.sh`
+(needs `rsvg-convert`); the PNGs are committed, so there is no build step.
+The maskable icon keeps the logo inside the
+[80% safe zone](https://web.dev/articles/maskable-icon).
 
 ## Development and validation
 
