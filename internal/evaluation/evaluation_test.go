@@ -55,7 +55,7 @@ func TestHardCasesDefeatStrictKeywordSearch(t *testing.T) {
 
 func TestStrictRequiresEveryWord(t *testing.T) {
 	api := Strict{API: demo.New()}
-	for q, want := range map[string]int{"garantie lave-linge": 1, "latest garantie lave-linge": 0} {
+	for q, want := range map[string]int{"garantie lave-linge": 1, "latest garantie lave-linge": 0, "arranty lave-linge": 0} {
 		p, err := api.Search(context.Background(), q, paperless.Filters{}, 10)
 		if err != nil {
 			t.Fatal(err)
@@ -85,6 +85,9 @@ func TestEvaluateExplainsRejectedRankings(t *testing.T) {
 		})
 		cases := []Case{{Query: "insurance warranty", Expected: 1}}
 		r, err := Evaluate(context.Background(), demo.New(), agent, nil, DefaultLimits, cases, "test")
+		if c := r.Cases[0]; !c.Returned || !c.Shown || !c.Read {
+			t.Errorf("expected document 1 was read by the agent, got %+v", c)
+		}
 		if err != nil || r.Cases[0].Mode != "Keyword fallback" || r.Cases[0].Reject != want {
 			t.Fatalf("want %s, got %+v %v", want, r.Cases, err)
 		}

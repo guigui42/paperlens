@@ -16,15 +16,31 @@ type diagTools struct {
 	search.Tools
 	mu    sync.Mutex
 	texts map[int][]string
+	shown map[int]bool
 }
 
-// newDiagTools counts prefetched excerpts as read, as the engine does.
+// newDiagTools counts prefetched candidates as shown and prefetched excerpts
+// as read, as the engine supplies both with the first model turn.
 func newDiagTools(t search.Tools) *diagTools {
-	d := &diagTools{Tools: t, texts: map[int][]string{}}
-	for _, ev := range t.Seed().Excerpts {
+	d := &diagTools{Tools: t, texts: map[int][]string{}, shown: map[int]bool{}}
+	seed := t.Seed()
+	for _, c := range seed.Candidates {
+		d.shown[c.ID] = true
+	}
+	for _, ev := range seed.Excerpts {
 		d.texts[ev.ID] = append(d.texts[ev.ID], ev.Text)
 	}
 	return d
+}
+
+func (t *diagTools) Search(ctx context.Context, q string) ([]search.Candidate, error) {
+	cs, err := t.Tools.Search(ctx, q)
+	t.mu.Lock()
+	for _, c := range cs {
+		t.shown[c.ID] = true
+	}
+	t.mu.Unlock()
+	return cs, err
 }
 
 func (t *diagTools) Excerpt(ctx context.Context, id int) (search.Evidence, error) {
@@ -73,25 +89,39 @@ func (t *diagTools) reason(r search.Ranking, err error) string {
 	return ""
 }
 
-// diagAgent wraps an agent and keeps the last rejection reason.
+// diagnosis is what one ranking job showed the agent, and why the engine
+// would reject its answer.
+type diagnosis struct {
+	reason      string
+	shown, read map[int]bool
+}
+
+// diagAgent wraps an agent and keeps the last job's diagnosis.
 type diagAgent struct {
 	inner search.Agent
 	mu    sync.Mutex
-	last  string
+	last  diagnosis
 }
 
 func (a *diagAgent) record(t *diagTools, r search.Ranking, err error) {
+	reason := t.reason(r, err)
+	t.mu.Lock()
+	d := diagnosis{reason: reason, shown: t.shown, read: map[int]bool{}}
+	for id := range t.texts {
+		d.read[id] = true
+	}
+	t.mu.Unlock()
 	a.mu.Lock()
-	a.last = t.reason(r, err)
+	a.last = d
 	a.mu.Unlock()
 }
 
-func (a *diagAgent) take() string {
+func (a *diagAgent) take() diagnosis {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s := a.last
-	a.last = ""
-	return s
+	d := a.last
+	a.last = diagnosis{}
+	return d
 }
 
 func (a *diagAgent) Rank(ctx context.Context, q string, t search.Tools) (search.Ranking, error) {

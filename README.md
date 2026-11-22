@@ -381,11 +381,13 @@ PAPERLENS_DEMO=true \
 
 The synthetic corpus scores 100% even with plain keyword search, so it cannot
 show whether a search change helps. Two ungated modes report per-case results
-(retrieved, rank, Paperless calls, AI credits, and why an AI ranking was
-rejected) for iterating on relevance:
+(whether Paperless returned the expected document, whether the model was shown
+it and read its excerpt, rank, Paperless calls, AI credits, and why an AI
+ranking was rejected) for iterating on relevance:
 
-- `-set hard` uses fictional queries that strict keyword search misses, with
-  Paperless-style matching where every query word must appear. Some cases are
+- `-set hard` uses fictional queries that keyword search misses under a
+  simplified all-words proxy (each query word must start a document word). It
+  approximates Paperless matching; it is not its search index. Some cases are
   marked `holdout` and are scored separately.
 - `-private labels.json` runs your own labelled queries
   (`[{"query":"…","expected":123,"holdout":false}]`, `expected` 0 for no match)

@@ -2,6 +2,7 @@ package evaluation
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -14,12 +15,16 @@ func words(s string) []string {
 	return strings.FieldsFunc(search.Fold(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 
-// Strict mimics Paperless full-text search, which requires every accent-folded
-// query word to appear. The demo archive scores any matching word, which hides
-// recall lost to filler words ("latest") or words the document never uses.
+// Strict approximates Paperless full-text search, which requires every
+// accent-folded query word to appear. It is a simplified proxy, not Whoosh:
+// a query word matches any document word it is a prefix of (a stand-in for
+// stemming), there are no stopwords or field queries, and result order comes
+// from the demo archive's scorer. The demo archive itself scores any matching
+// word, which hides recall lost to filler words ("latest") or words the
+// document never uses.
 type Strict struct{ paperless.API }
 
-// Search keeps only demo results containing every query word.
+// Search keeps only demo results where every query word starts a document word.
 func (s Strict) Search(ctx context.Context, q string, f paperless.Filters, limit int) (paperless.Page, error) {
 	p, err := s.API.Search(ctx, q, f, 100)
 	if err != nil {
@@ -28,10 +33,10 @@ func (s Strict) Search(ctx context.Context, q string, f paperless.Filters, limit
 	terms := words(q)
 	out := paperless.Page{Results: []paperless.Document{}}
 	for _, d := range p.Results {
-		hay := search.Fold(d.Title + " " + d.Content)
+		tokens := words(d.Title + " " + d.Content)
 		all := true
 		for _, t := range terms {
-			if !strings.Contains(hay, t) {
+			if !slices.ContainsFunc(tokens, func(w string) bool { return strings.HasPrefix(w, t) }) {
 				all = false
 				break
 			}
@@ -52,7 +57,7 @@ func (s Strict) Search(ctx context.Context, q string, f paperless.Filters, limit
 }
 
 // recorder notes every document ID Paperless returned during one search job,
-// so a miss can be split into "never retrieved" and "retrieved but not ranked".
+// including ones the engine later drops (candidate cap, filters, exclusions).
 type recorder struct {
 	paperless.API
 	mu   sync.Mutex

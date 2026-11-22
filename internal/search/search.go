@@ -130,9 +130,13 @@ type job struct {
 	calls     int
 	limited   bool
 	stage     func(string)
-	queries   map[string]bool
-	reserve   int
-	seed      Seed
+	// queries maps each fetched query to its page size; 0 means a full page.
+	queries map[string]int
+	reserve int
+	// modelReserve slots stay free for model searches; relaxPage bounds each
+	// automatic relaxed query.
+	modelReserve, relaxPage int
+	seed                    Seed
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
@@ -194,18 +198,26 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			}
 		}()
 	}
-	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]bool{}}
+	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]int{}}
 	var relaxed []string
 	if useAI && e.Limits.Searches > 1 {
 		// Keep room for model expansions so a broad original query cannot
 		// occupy every candidate slot before they run.
-		j.reserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+		j.modelReserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+		j.reserve = j.modelReserve
 		// Paperless requires every query word, so a document missing one word
 		// (or a filler word like "latest") is never retrieved. Relaxed queries
-		// get their own slots and always leave the model two searches.
+		// get at most half of the non-model slots and always leave the model
+		// two searches.
 		relaxed = relaxations(query)
 		relaxed = relaxed[:max(0, min(len(relaxed), e.Limits.Searches-3))]
-		j.reserve = min(e.Limits.Candidates-1, j.reserve+len(relaxed)*relaxedPage)
+		if room := e.Limits.Candidates - j.modelReserve; len(relaxed) > 0 {
+			j.relaxPage = min(relaxedPage, room/(2*len(relaxed)))
+			if j.relaxPage < 1 {
+				relaxed = nil
+			}
+		}
+		j.reserve = min(e.Limits.Candidates-1, j.reserve+len(relaxed)*j.relaxPage)
 	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
@@ -234,7 +246,7 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 		}
 		mark = time.Now()
 		for _, q := range relaxed {
-			if _, err := j.search(ctx, q, relaxedPage); err != nil {
+			if _, err := j.search(ctx, q, j.relaxPage); err != nil {
 				if ctx.Err() != nil {
 					return Output{}, ctx.Err()
 				}
@@ -333,11 +345,14 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	return j.search(ctx, query, 0)
 }
 
-// relaxedPage bounds how many top documents each relaxed query may add.
+// relaxedPage is the most top documents one relaxed query may add.
 const relaxedPage = 5
 
-// search runs one Paperless query. page > 0 keeps only that many top results
-// and does not mark the job limited, since truncation is intended.
+// search runs one Paperless query. page > 0 is an automatic relaxed query: it
+// keeps only that many top results, never takes the model's reserved slots,
+// keeps the excerpt window of documents already retrieved for the original
+// query, and does not mark the job limited, since truncation is intended. A
+// later full-page search of the same text fetches the rest.
 func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -347,7 +362,8 @@ func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, 
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 500 {
 		return nil, errors.New("query exceeds limit")
 	}
-	if j.queries[query] {
+	prev, fetched := j.queries[query]
+	if fetched && (prev == 0 || (page > 0 && page <= prev)) {
 		return j.candidates(), nil
 	}
 	if j.calls >= j.limits.Searches {
@@ -357,6 +373,8 @@ func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, 
 	capacity := j.limits.Candidates
 	if j.calls == 0 {
 		capacity = max(1, capacity-j.reserve)
+	} else if page > 0 {
+		capacity = max(1, capacity-j.modelReserve)
 	}
 	j.calls++
 	size := capacity
@@ -371,22 +389,30 @@ func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, 
 		j.limited = true
 	}
 	if j.queries == nil {
-		j.queries = map[string]bool{}
+		j.queries = map[string]int{}
 	}
-	j.queries[query] = true
+	j.queries[query] = page
 	seen := map[int]bool{}
 	for n, d := range p.Results {
 		if d.ID < 1 || seen[d.ID] || !j.filters.Matches(d) {
 			continue
 		}
 		seen[d.ID] = true
-		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= capacity {
+		old, known := j.docs[d.ID]
+		if !known && len(j.docs) >= capacity {
 			j.limited = true
 			continue
 		}
-		d.Content = excerptWindow(d.Content, query, j.limits.Characters)
+		if known && page > 0 {
+			d.Content = old.Content
+		} else {
+			d.Content = excerptWindow(d.Content, query, j.limits.Characters)
+		}
 		j.docs[d.ID] = d
-		j.ranks[d.ID] += 1 / float64(60+n+1)
+		// An upgraded truncated query already ranked its first prev results.
+		if !fetched || n >= prev {
+			j.ranks[d.ID] += 1 / float64(60+n+1)
+		}
 	}
 	return j.candidates(), nil
 }

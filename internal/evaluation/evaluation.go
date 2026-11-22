@@ -47,24 +47,28 @@ func HardCases() ([]Case, error) { var c []Case; err := json.Unmarshal(hard, &c)
 
 // CaseResult explains one case without document titles or text.
 type CaseResult struct {
-	Query     string  `json:"query"`
-	Expected  int     `json:"expected"`
-	Holdout   bool    `json:"holdout,omitempty"`
-	Retrieved bool    `json:"retrieved"`
-	Rank      int     `json:"rank"`
-	Top       []int   `json:"top"`
-	Mode      string  `json:"mode"`
-	Calls     int     `json:"calls"`
-	NanoAIU   float64 `json:"nano_aiu"`
-	Seconds   float64 `json:"seconds"`
+	Query    string `json:"query"`
+	Expected int    `json:"expected"`
+	Holdout  bool   `json:"holdout,omitempty"`
+	// Returned: Paperless returned it in some search of the job. Shown: it was
+	// a candidate visible to the agent. Read: the agent saw its excerpt.
+	Returned bool    `json:"returned"`
+	Shown    bool    `json:"shown"`
+	Read     bool    `json:"read"`
+	Rank     int     `json:"rank"`
+	Top      []int   `json:"top"`
+	Mode     string  `json:"mode"`
+	Calls    int     `json:"calls"`
+	NanoAIU  float64 `json:"nano_aiu"`
+	Seconds  float64 `json:"seconds"`
 	// Reject classifies why the engine would refuse the agent's ranking.
 	Reject string `json:"reject,omitempty"`
 }
 
-// Score aggregates one split. Retrieved counts answerable cases whose expected
-// document came back from any Paperless search in the job.
+// Score aggregates one split. Returned and Shown count answerable cases whose
+// expected document Paperless returned, and the agent was shown, respectively.
 type Score struct {
-	Answerable, Retrieved, Hit3, NoMatch, CorrectNoMatch, Fallbacks int
+	Answerable, Returned, Shown, Hit3, NoMatch, CorrectNoMatch, Fallbacks int
 }
 
 // Detailed is an ungated per-case report for iterating on search quality.
@@ -94,8 +98,9 @@ func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, exclud
 		if err != nil {
 			return report, fmt.Errorf("case %q: %w", c.Query, err)
 		}
+		d := diag.take()
 		r := CaseResult{Query: c.Query, Expected: c.Expected, Holdout: c.Holdout, Mode: out.Mode, Calls: out.Calls,
-			NanoAIU: out.Usage.NanoAIU, Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: diag.take()}
+			NanoAIU: out.Usage.NanoAIU, Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: d.reason}
 		var kept []int
 		for _, res := range out.Results {
 			if !res.Excluded {
@@ -124,9 +129,12 @@ func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, exclud
 			}
 		} else {
 			s.Answerable++
-			r.Retrieved = rec.retrieved(c.Expected)
-			if r.Retrieved {
-				s.Retrieved++
+			r.Returned, r.Shown, r.Read = rec.retrieved(c.Expected), d.shown[c.Expected], d.read[c.Expected]
+			if r.Returned {
+				s.Returned++
+			}
+			if r.Shown {
+				s.Shown++
 			}
 			if ranked && r.Rank >= 1 && r.Rank <= 3 {
 				s.Hit3++
