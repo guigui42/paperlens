@@ -27,7 +27,7 @@ import (
 	"github.com/guigui42/paperlens/internal/search"
 )
 
-//go:embed templates/*.html static/*
+//go:embed templates/*.html static/* pwa/*
 var assets embed.FS
 
 // Server owns jobs, templates and restart-safe upload receipts.
@@ -39,6 +39,7 @@ type Server struct {
 	key         []byte
 	templates   *template.Template
 	uploadSlots chan struct{}
+	sw          []byte
 }
 type page struct {
 	Title, CSRF, Query, Error, Nonce string
@@ -103,7 +104,11 @@ func New(c config.Config, api paperless.API, engine *search.Engine) (*Server, er
 	if err != nil {
 		return nil, err
 	}
-	return &Server{config: c, api: api, key: key, receipts: receipts, templates: t, jobs: newJobs(engine, c.Concurrency, c.Queue, c.Deadline), uploadSlots: make(chan struct{}, 2)}, nil
+	sw, err := serviceWorker(c.Demo)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{config: c, api: api, key: key, receipts: receipts, templates: t, jobs: newJobs(engine, c.Concurrency, c.Queue, c.Deadline), uploadSlots: make(chan struct{}, 2), sw: sw}, nil
 }
 
 // Close cancels all in-flight searches and waits for cleanup.
@@ -128,6 +133,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /upload", s.uploadPage)
 	mux.HandleFunc("POST /upload", s.upload)
 	mux.HandleFunc("GET /uploads/{id}", s.uploadStatus)
+	mux.HandleFunc("GET /manifest.webmanifest", s.manifest)
+	mux.HandleFunc("GET /sw.js", s.serviceWorker)
+	mux.HandleFunc("GET /offline", s.offline)
 	static, err := fs.Sub(assets, "static")
 	if err != nil {
 		panic(err)

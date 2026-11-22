@@ -45,6 +45,8 @@ body {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  /* Clears notches and the home indicator when installed (viewport-fit=cover). */
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: var(--cp-bg);
   color: var(--cp-text);
   font: 16px/1.5 Aptos, "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -229,6 +231,7 @@ footer {
 .upload-sending { display: none; margin: 0; color: var(--cp-text-muted); font-size: 14px; }
 .htmx-request .upload-sending { display: block; }
 .upload-status:not(:empty) { margin-top: 24px; }
+.offline-actions { margin-top: 24px; }
 .receipt-list { list-style: none; padding: 0; }
 .receipt-list li { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--cp-border); font-size: 14px; }
 .receipt-list a { display: inline-flex; align-items: center; min-height: 48px; }

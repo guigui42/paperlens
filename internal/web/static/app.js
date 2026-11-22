@@ -4,7 +4,30 @@
     ? param
     : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.setAttribute("data-theme", theme);
+  syncThemeColor(theme);
 })();
+
+// Keeps the installed app's status bar in step with the toggled theme.
+function syncThemeColor(theme) {
+  const color = theme === "dark" ? "#22282e" : "#ffffff";
+  document.querySelectorAll('meta[name="theme-color"]').forEach(meta => meta.setAttribute("content", color));
+}
+
+// Service workers need a secure context (HTTPS or localhost). Over plain HTTP
+// the app still installs from the manifest, just without the offline page.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+  });
+}
+
+// Offline retry reloads the requested URL, keeping its history state.
+document.addEventListener("click", event => {
+  if (event.target instanceof Element && event.target.closest("[data-offline-retry]")) {
+    event.preventDefault();
+    window.location.reload();
+  }
+});
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("paperlens", () => ({
@@ -12,6 +35,7 @@ document.addEventListener("alpine:init", () => {
     uploadError: "",
     toggleTheme() {
       document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      syncThemeColor(document.documentElement.dataset.theme);
     },
     get dropClass() { return this.dragging ? "dragging" : ""; },
     dragOver() { this.dragging = true; },
@@ -368,13 +392,14 @@ document.addEventListener("htmx:after:request", event => {
   document.addEventListener("DOMContentLoaded", () => {
     const state = load();
     render(state.items, state.ok);
-    const restored = history.state?.suppressAutorun === true;
+    const form = document.getElementById("search-form");
+    // The offline page has no search form; keep the flag for the next online load.
+    const restored = Boolean(form) && history.state?.suppressAutorun === true;
     if (restored) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
       const notice = document.querySelector("[data-history-restored]");
       if (notice) notice.hidden = false;
     }
-    const form = document.getElementById("search-form");
     if (!restored && form?.hasAttribute("data-autorun")) {
       const panel = document.querySelector("[data-recent]");
       if (panel) panel.open = false;
