@@ -7,6 +7,7 @@ import (
 
 	"github.com/guigui42/paperlens/internal/demo"
 	"github.com/guigui42/paperlens/internal/paperless"
+	"github.com/guigui42/paperlens/internal/search"
 )
 
 func TestSyntheticRelevance(t *testing.T) {
@@ -61,6 +62,31 @@ func TestStrictRequiresEveryWord(t *testing.T) {
 		}
 		if len(p.Results) != want {
 			t.Errorf("%q: got %d results, want %d", q, len(p.Results), want)
+		}
+	}
+}
+
+type rankFunc func(context.Context, string, search.Tools) (search.Ranking, error)
+
+func (f rankFunc) Rank(c context.Context, q string, t search.Tools) (search.Ranking, error) {
+	return f(c, q, t)
+}
+
+func TestEvaluateExplainsRejectedRankings(t *testing.T) {
+	for want, pick := range map[string]search.Pick{
+		"unread_id":            {ID: 999, Quote: "Washing machine warranty", Strength: "strong"},
+		"quote_not_in_excerpt": {ID: 1, Quote: "invented text", Strength: "strong"},
+	} {
+		agent := rankFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			if _, err := tools.Excerpt(ctx, 1); err != nil {
+				return search.Ranking{}, err
+			}
+			return search.Ranking{Results: []search.Pick{pick}}, nil
+		})
+		cases := []Case{{Query: "insurance warranty", Expected: 1}}
+		r, err := Evaluate(context.Background(), demo.New(), agent, nil, DefaultLimits, cases, "test")
+		if err != nil || r.Cases[0].Mode != "Keyword fallback" || r.Cases[0].Reject != want {
+			t.Fatalf("want %s, got %+v %v", want, r.Cases, err)
 		}
 	}
 }

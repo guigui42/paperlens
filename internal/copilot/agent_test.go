@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,5 +136,15 @@ func TestPinnedRuntimeLifecycle(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAcronymsAreAllCapsShortTokens(t *testing.T) {
+	got := strings.Join(acronyms("certificat VIA, avis TF 2015 T2 Assurance PAC VIA CNI-Guillaume"), ",")
+	if got != "VIA,TF,T2,PAC,CNI" {
+		t.Fatalf("got %q", got)
+	}
+	if acronyms("facture électricité 2025") != nil {
+		t.Fatal("lowercase words and numbers are not acronyms")
 	}
 }

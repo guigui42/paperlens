@@ -381,7 +381,8 @@ PAPERLENS_DEMO=true \
 
 The synthetic corpus scores 100% even with plain keyword search, so it cannot
 show whether a search change helps. Two ungated modes report per-case results
-(retrieved, rank, Paperless calls and AI credits) for iterating on relevance:
+(retrieved, rank, Paperless calls, AI credits, and why an AI ranking was
+rejected) for iterating on relevance:
 
 - `-set hard` uses fictional queries that strict keyword search misses, with
   Paperless-style matching where every query word must appear. Some cases are

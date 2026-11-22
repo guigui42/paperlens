@@ -130,8 +130,18 @@ pipeline in six interleaved live pairs, `gpt-6-luna` at low effort, CLI 1.0.109:
 | Latency per search, p50 / p90 | 8.9 s / 10.3 s | 7.7 s / 11.2 s |
 
 A separately authorized private labelled set on a real archive moved in the
-same direction; its queries and documents are not published. Short acronyms
-(three letters or fewer) are still not expanded reliably.
+same direction; its queries and documents are not published.
+
+All-caps query tokens of 2 to 6 characters are then passed to the model as
+`possible_acronyms`, and the prompt requires a search with the spelled-out form
+before answering from prefetched excerpts. In six interleaved live pairs on a
+private set of 8 labelled queries (5 with acronyms the documents spell out),
+Hit@3 went from 3–4 to 5–7 per run. The hard synthetic set stayed at 9/9 dev
+(once 8/9) and 3/3 no-match; AI credits per search rose about 9%.
+
+Some searches still fall back to keyword results because the model's quote or
+document choice fails evidence validation. `-set hard` and `-private` reports
+now classify the reason per case (`reject`), without logging any content.
 
 ## In-app WebKit origin regression
 

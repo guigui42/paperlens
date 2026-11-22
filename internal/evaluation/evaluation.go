@@ -57,6 +57,8 @@ type CaseResult struct {
 	Calls     int     `json:"calls"`
 	NanoAIU   float64 `json:"nano_aiu"`
 	Seconds   float64 `json:"seconds"`
+	// Reject classifies why the engine would refuse the agent's ranking.
+	Reject string `json:"reject,omitempty"`
 }
 
 // Score aggregates one split. Retrieved counts answerable cases whose expected
@@ -80,6 +82,7 @@ type Detailed struct {
 func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, excluded []string, limits search.Limits, cases []Case, kind string) (Detailed, error) {
 	start := time.Now()
 	rec := &recorder{API: api}
+	agent, diag := diagnose(agent)
 	e := search.Engine{API: rec, Agent: agent, Limits: limits, ExcludedTags: excluded}
 	report := Detailed{Kind: kind, Limits: limits, Cases: []CaseResult{}}
 	for _, c := range cases {
@@ -92,7 +95,7 @@ func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, exclud
 			return report, fmt.Errorf("case %q: %w", c.Query, err)
 		}
 		r := CaseResult{Query: c.Query, Expected: c.Expected, Holdout: c.Holdout, Mode: out.Mode, Calls: out.Calls,
-			NanoAIU: out.Usage.NanoAIU, Seconds: time.Since(caseStart).Seconds(), Top: []int{}}
+			NanoAIU: out.Usage.NanoAIU, Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: diag.take()}
 		var kept []int
 		for _, res := range out.Results {
 			if !res.Excluded {
