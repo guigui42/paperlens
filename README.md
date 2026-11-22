@@ -52,6 +52,10 @@ Demo uploads are in memory and disappear when the process restarts.
 - Live Paperless retrieval, French/English query expansion through Copilot,
   rank-based deduplication, bounded excerpts and strictly validated result IDs
   and quotes. Titles, dates, actions and URLs always come from Paperless.
+- After an AI search, "Show N other candidates" lists every retrieved document
+  the AI did not select, as unverified keyword matches from the same snapshot.
+  It makes no extra Paperless or AI calls, so a document the model missed is
+  still one click away.
 - Immutable issue-date, correspondent, type, tag and scalar custom-field
   filters, including a Person field if the archive defines one. Text, select,
   date, boolean, integer, float and URL fields support exact matching. Select
@@ -419,6 +423,25 @@ PAPERLENS_DEMO=true \
   COPILOT_CLI_PATH=/absolute/path/to/pinned/copilot \
   go run ./cmd/evaluate -live
 ```
+
+The synthetic corpus scores 100% even with plain keyword search, so it cannot
+show whether a search change helps. Two ungated modes report per-case results
+(whether Paperless returned the expected document, whether the model was shown
+it and read its excerpt, rank, Paperless calls, AI credits with whether
+billing was complete, partial or unavailable, and why an AI ranking was
+rejected) for iterating on relevance:
+
+- `-set hard` uses fictional queries that keyword search misses under a
+  simplified all-words proxy (each query word must start a document word). It
+  approximates Paperless matching; it is not its search index. Some cases are
+  marked `holdout` and are scored separately.
+- `-private labels.json` runs your own labelled queries
+  (`[{"query":"…","expected":123,"holdout":false}]`, `expected` required, 0 for no match)
+  against the configured `PAPERLESS_URL`. Keep the file out of git, for example
+  under `.state/`. With `-live`, matching document text is sent to Copilot, as in
+  normal AI search.
+
+Both modes work with the fake agent (free, retrieval only) or `-live`.
 
 See [validation results and remaining boundaries](docs/validation.md) and the
 [approved implementation plan](plan.md). UI prior art:

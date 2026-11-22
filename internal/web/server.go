@@ -52,13 +52,20 @@ type page struct {
 	Job                        job
 	Running                    bool
 	Results                    []search.Result
-	Next, Previous             int
+	Next, Previous, Page       int
 	HasPrevious, HasNext       bool
-	Receipt                    receipt
-	Receipts                   []receipt
-	Document                   paperless.Document
-	PDF                        bool
-	PaperlessURL               string
+	// ShowOthers expands the candidates an AI search did not select.
+	ShowOthers   bool
+	Receipt      receipt
+	Receipts     []receipt
+	Document     paperless.Document
+	PDF          bool
+	PaperlessURL string
+}
+
+type cardData struct {
+	search.Result
+	Vocab paperless.Vocabulary
 }
 
 // New validates persistent storage before accepting requests.
@@ -91,6 +98,8 @@ func New(c config.Config, api paperless.API, engine *search.Engine) (*Server, er
 			return ""
 		},
 		"docURL": api.DocumentURL,
+		// card pairs a result with the vocabulary its template needs.
+		"card": func(r search.Result, v paperless.Vocabulary) cardData { return cardData{r, v} },
 	}).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -328,6 +337,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	p.HasPrevious = start > 0
 	p.Next = n + 1
 	p.Previous = n - 1
+	p.Page = n
+	p.ShowOthers = r.URL.Query().Get("candidates") == "1"
 	s.renderSearch(w, r, p)
 }
 func (s *Server) cancelSearch(w http.ResponseWriter, r *http.Request) {

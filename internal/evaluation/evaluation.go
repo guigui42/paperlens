@@ -19,10 +19,15 @@ import (
 //go:embed queries.json
 var queries []byte
 
-// Case is a human-labelled fixture; Expected=0 means no match.
+//go:embed hard.json
+var hard []byte
+
+// Case is a human-labelled fixture; Expected=0 means no match. Holdout cases
+// are scored separately and must not guide changes.
 type Case struct {
 	Query    string `json:"query"`
 	Expected int    `json:"expected"`
+	Holdout  bool   `json:"holdout,omitempty"`
 }
 
 // Report distinguishes synthetic model stand-ins from actual inference.
@@ -35,6 +40,129 @@ type Report struct {
 
 // Cases returns the embedded evaluation labels.
 func Cases() ([]Case, error) { var c []Case; err := json.Unmarshal(queries, &c); return c, err }
+
+// HardCases returns synthetic labels that Paperless-style strict keyword
+// search misses, so context-aware retrieval has room to show a difference.
+func HardCases() ([]Case, error) { var c []Case; err := json.Unmarshal(hard, &c); return c, err }
+
+// CaseResult explains one case without document titles or text.
+type CaseResult struct {
+	Query    string `json:"query"`
+	Expected int    `json:"expected"`
+	Holdout  bool   `json:"holdout,omitempty"`
+	// Returned: Paperless returned it in some search of the job. Shown: it was
+	// a candidate visible to the agent. Read: the agent saw its excerpt.
+	Returned bool    `json:"returned"`
+	Shown    bool    `json:"shown"`
+	Read     bool    `json:"read"`
+	Rank     int     `json:"rank"`
+	Top      []int   `json:"top"`
+	Mode     string  `json:"mode"`
+	Calls    int     `json:"calls"`
+	NanoAIU  float64 `json:"nano_aiu"`
+	// Credits is search.Usage.Status: unavailable or partial billing makes
+	// NanoAIU unknown or a lower bound, never a zero cost.
+	Credits string  `json:"credits"`
+	Seconds float64 `json:"seconds"`
+	// Reject classifies why the engine would refuse the agent's ranking.
+	Reject string `json:"reject,omitempty"`
+}
+
+// Score aggregates one split. Returned and Shown count answerable cases whose
+// expected document Paperless returned, and the agent was shown, respectively.
+type Score struct {
+	Answerable, Returned, Shown, Hit3, NoMatch, CorrectNoMatch, Fallbacks int
+}
+
+// Detailed is an ungated per-case report for iterating on search quality.
+type Detailed struct {
+	Kind         string `json:"kind"`
+	Limits       search.Limits
+	Dev, Holdout Score
+	NanoAIU      float64 `json:"nano_aiu"`
+	// Credits is the billing status across all cases, including a failed one.
+	Credits        string       `json:"credits"`
+	ElapsedSeconds float64      `json:"elapsed_seconds"`
+	Cases          []CaseResult `json:"cases"`
+}
+
+// addUsage sums usage so Status marks a total with any unbilled call partial.
+func addUsage(a, b search.Usage) search.Usage {
+	return search.Usage{Inference: a.Inference || b.Inference, Calls: a.Calls + b.Calls, Reported: a.Reported + b.Reported,
+		Partial: a.Partial || b.Partial, NanoAIU: a.NanoAIU + b.NanoAIU}
+}
+
+// Evaluate runs each case through the production engine. Fallbacks count as
+// misses, as in Run. On error the partial report still includes the failed
+// case's AI usage and the elapsed time.
+func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, excluded []string, limits search.Limits, cases []Case, kind string) (report Detailed, err error) {
+	start := time.Now()
+	rec := &recorder{API: api}
+	agent, diag := diagnose(agent)
+	e := search.Engine{API: rec, Agent: agent, Limits: limits, ExcludedTags: excluded}
+	report = Detailed{Kind: kind, Limits: limits, Cases: []CaseResult{}}
+	var usage search.Usage
+	defer func() {
+		report.NanoAIU, report.Credits = usage.NanoAIU, usage.Status()
+		report.ElapsedSeconds = time.Since(start).Seconds()
+	}()
+	for _, c := range cases {
+		rec.reset()
+		caseStart := time.Now()
+		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		out, err := e.Run(jobCtx, c.Query, paperless.Filters{}, false, nil)
+		cancel()
+		usage = addUsage(usage, out.Usage)
+		if err != nil {
+			return report, fmt.Errorf("case %q: %w", c.Query, err)
+		}
+		d := diag.take()
+		r := CaseResult{Query: c.Query, Expected: c.Expected, Holdout: c.Holdout, Mode: out.Mode, Calls: out.Calls,
+			NanoAIU: out.Usage.NanoAIU, Credits: out.Usage.Status(), Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: d.reason}
+		var kept []int
+		for _, res := range out.Results {
+			if !res.Excluded {
+				kept = append(kept, res.Document.ID)
+			}
+		}
+		r.Top = append(r.Top, kept[:min(3, len(kept))]...)
+		for i, id := range kept {
+			if id == c.Expected {
+				r.Rank = i + 1
+				break
+			}
+		}
+		s := &report.Dev
+		if c.Holdout {
+			s = &report.Holdout
+		}
+		ranked := out.Mode == "Evidence-ranked search"
+		if !ranked {
+			s.Fallbacks++
+		}
+		if c.Expected == 0 {
+			s.NoMatch++
+			// Excluded keyword matches are still displayed, so they count.
+			if len(out.Results) == 0 && ranked {
+				s.CorrectNoMatch++
+			}
+		} else {
+			s.Answerable++
+			r.Returned, r.Shown, r.Read = rec.retrieved(c.Expected), d.shown[c.Expected], d.read[c.Expected]
+			if r.Returned {
+				s.Returned++
+			}
+			if r.Shown {
+				s.Shown++
+			}
+			if ranked && r.Rank >= 1 && r.Rank <= 3 {
+				s.Hit3++
+			}
+		}
+		report.Cases = append(report.Cases, r)
+	}
+	return report, nil
+}
 
 // FakeAgent is a deterministic contract test, not a model-quality evaluation.
 type FakeAgent struct{}

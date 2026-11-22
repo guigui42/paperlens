@@ -1,0 +1,19 @@
+[
+  {"query":"proof my flat is insured","expected":1},
+  {"query":"dernière attestation habitation","expected":1,"holdout":true},
+  {"query":"electricity invoice September 2025","expected":3},
+  {"query":"machine à laver garantie","expected":4},
+  {"query":"assurance voiture","expected":5,"holdout":true},
+  {"query":"loyer appartement octobre","expected":6},
+  {"query":"facture box internet","expected":7},
+  {"query":"ticket de caisse vélo","expected":8,"holdout":true},
+  {"query":"inscription école Alex","expected":9},
+  {"query":"facture eau T2 2025","expected":10},
+  {"query":"entretien PAC","expected":11},
+  {"query":"rapport de service pompe à chaleur","expected":11,"holdout":true},
+  {"query":"garantie PC portable","expected":12},
+  {"query":"avis d'imposition revenus 2024","expected":13,"holdout":true},
+  {"query":"assurance bateau","expected":0},
+  {"query":"garantie téléphone","expected":0},
+  {"query":"facture gaz","expected":0,"holdout":true}
+]

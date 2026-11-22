@@ -133,8 +133,44 @@ func TestBudgetsAndDeduplication(t *testing.T) {
 		return search.Ranking{Results: []search.Pick{}}, nil
 	}))
 	out, err = e.Run(context.Background(), "home insurance", paperless.Filters{}, false, nil)
-	if err != nil || out.Candidates != 4 || out.Calls != 3 {
+	// One original, two relaxed ("insurance", "home") and two model searches.
+	if err != nil || out.Candidates != 4 || out.Calls != 5 {
 		t.Fatal(out, err)
+	}
+}
+
+type queryLog struct {
+	paperless.API
+	queries []string
+}
+
+func (q *queryLog) Search(ctx context.Context, s string, f paperless.Filters, n int) (paperless.Page, error) {
+	q.queries = append(q.queries, s)
+	return q.API.Search(ctx, s, f, n)
+}
+
+func TestRelaxedQueriesKeepModelSearches(t *testing.T) {
+	api := &queryLog{API: demo.New()}
+	var modelCalls int
+	e := &search.Engine{API: api, Limits: search.Limits{Searches: 4, Candidates: 40, Excerpts: 6, Characters: 2500},
+		Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			for _, s := range []string{"a", "b", "c"} {
+				if _, err := tools.Search(ctx, s); err == nil {
+					modelCalls++
+				}
+			}
+			return search.Ranking{Results: []search.Pick{}}, nil
+		})}
+	if _, err := e.Run(context.Background(), "latest service militaire", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"latest service militaire", "service militaire", "a", "b"}
+	if strings.Join(api.queries, "|") != strings.Join(want, "|") || modelCalls != 2 {
+		t.Fatalf("queries %q, model calls %d", api.queries, modelCalls)
+	}
+	api.queries = nil
+	if _, err := e.Run(context.Background(), "latest service militaire", paperless.Filters{}, true, nil); err != nil || len(api.queries) != 1 {
+		t.Fatalf("keyword-only search must not relax: %q %v", api.queries, err)
 	}
 }
 func TestLatestAndMentionedYear(t *testing.T) {
@@ -215,5 +251,150 @@ func TestPrefetchSeed(t *testing.T) {
 	})
 	if _, err = e.Run(context.Background(), "insurance", paperless.Filters{}, false, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// scripted returns fixed result lists per query, like Paperless would.
+type scripted struct {
+	paperless.API
+	pages map[string][]paperless.Document
+}
+
+func (s scripted) Metadata(context.Context) (paperless.Vocabulary, error) {
+	return paperless.Vocabulary{Tags: []paperless.Term{{ID: 900, Name: "Export financier"}}}, nil
+}
+
+func (s scripted) Search(_ context.Context, q string, _ paperless.Filters, n int) (paperless.Page, error) {
+	docs := s.pages[q]
+	return paperless.Page{Count: len(docs), Results: append([]paperless.Document{}, docs[:min(n, len(docs))]...)}, nil
+}
+
+func docs(from, to int, content string) []paperless.Document {
+	var out []paperless.Document
+	for id := from; id <= to; id++ {
+		out = append(out, paperless.Document{ID: id, Title: "Document", Content: content})
+	}
+	return out
+}
+
+func hasCandidate(cs []search.Candidate, id int) bool {
+	for _, c := range cs {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestModelSearchFetchesBeyondTruncatedRelaxedQuery(t *testing.T) {
+	api := scripted{pages: map[string][]paperless.Document{"militaire": docs(1, 10, "militaire")}}
+	found := false
+	e := &search.Engine{API: api, Limits: search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500},
+		Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			if hasCandidate(tools.Seed().Candidates, 6) {
+				t.Error("relaxed query should keep only its top five")
+			}
+			cs, err := tools.Search(ctx, "militaire")
+			found = err == nil && hasCandidate(cs, 6)
+			return search.Ranking{Results: []search.Pick{}}, nil
+		})}
+	if _, err := e.Run(context.Background(), "service militaire", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("model search of a relaxed query must fetch the full page")
+	}
+}
+
+func TestRelaxedQueriesKeepOriginalExcerptWindow(t *testing.T) {
+	content := "insurance contract terms. " + strings.Repeat("filler text ", 400) + "reimbursement of the dental claim"
+	doc := []paperless.Document{{ID: 1, Title: "Letter", Content: content}}
+	api := scripted{pages: map[string][]paperless.Document{"reimbursement insurance": doc, "reimbursement": doc, "insurance": doc}}
+	var seed search.Seed
+	e := &search.Engine{API: api, Limits: search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 300},
+		Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			seed = tools.Seed()
+			return search.Ranking{Results: []search.Pick{}}, nil
+		})}
+	if _, err := e.Run(context.Background(), "reimbursement insurance", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(seed.Excerpts) != 1 || !strings.Contains(seed.Excerpts[0].Text, "reimbursement") {
+		t.Fatalf("relaxed query replaced the original evidence window: %+v", seed.Excerpts)
+	}
+}
+
+func TestRelaxedQueriesLeaveModelCandidateSlots(t *testing.T) {
+	api := scripted{pages: map[string][]paperless.Document{
+		"alpha beta": docs(1, 20, "alpha beta"), "alpha": docs(21, 30, "alpha"), "beta": docs(31, 40, "beta"), "gamma": docs(99, 99, "gamma"),
+	}}
+	admitted := false
+	e := &search.Engine{API: api, Limits: search.Limits{Searches: 6, Candidates: 10, Excerpts: 6, Characters: 2500},
+		Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+			cs, err := tools.Search(ctx, "gamma")
+			admitted = err == nil && hasCandidate(cs, 99)
+			return search.Ranking{Results: []search.Pick{}}, nil
+		})}
+	if _, err := e.Run(context.Background(), "alpha beta", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !admitted {
+		t.Fatal("relaxed queries left no candidate slot for the model")
+	}
+}
+
+func TestRelaxedQueriesKeepAccents(t *testing.T) {
+	api := &queryLog{API: demo.New()}
+	e := engine(agentFunc(func(context.Context, string, search.Tools) (search.Ranking, error) {
+		return search.Ranking{Results: []search.Pick{}}, nil
+	}))
+	e.API = api
+	if _, err := e.Run(context.Background(), "Dernière facture Électricité", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Dernière facture Électricité", "facture électricité", "électricité"}
+	if strings.Join(api.queries, "|") != strings.Join(want, "|") {
+		t.Fatalf("queries %q", api.queries)
+	}
+}
+
+func TestNoMatchAfterTruncatedRelaxedQueryIsLimited(t *testing.T) {
+	api := scripted{pages: map[string][]paperless.Document{"militaire": docs(1, 10, "militaire")}}
+	for _, fetch := range []bool{false, true} {
+		e := &search.Engine{API: api, Limits: search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500},
+			Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+				if fetch {
+					tools.Search(ctx, "militaire")
+				}
+				return search.Ranking{Results: []search.Pick{}}, nil
+			})}
+		out, err := e.Run(context.Background(), "service militaire", paperless.Filters{}, false, nil)
+		if err != nil || out.Limited == fetch {
+			t.Fatalf("full fetch %v: limited %v, %v", fetch, out.Limited, err)
+		}
+	}
+}
+
+func TestUnselectedCandidatesStayReachable(t *testing.T) {
+	pickFirst := agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+		if _, err := tools.Excerpt(ctx, 1); err != nil {
+			return search.Ranking{}, err
+		}
+		return search.Ranking{Results: []search.Pick{{ID: 1, Quote: "Home insurance certificate 2025", Strength: "strong"}}}, nil
+	})
+	out, err := engine(pickFirst).Run(context.Background(), "home insurance", paperless.Filters{}, false, nil)
+	if err != nil || out.Mode != "Evidence-ranked search" {
+		t.Fatal(out, err)
+	}
+	others := map[int]bool{}
+	for _, r := range out.Others {
+		others[r.Document.ID] = true
+	}
+	if others[1] || !others[2] || len(out.Results)+len(out.Others) != out.Candidates {
+		t.Fatalf("others %v, results %d, candidates %d", others, len(out.Results), out.Candidates)
+	}
+	out, err = engine(pickFirst).Run(context.Background(), "home insurance", paperless.Filters{}, true, nil)
+	if err != nil || out.Others != nil {
+		t.Fatal("keyword results already list every candidate", out.Others, err)
 	}
 }

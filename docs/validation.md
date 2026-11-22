@@ -107,6 +107,76 @@ Manual permission mode was confirmed before inference, and the isolated runtime
 directory was empty afterward. This is a new hosted run, not a relabelled result
 from the previous runtime pair; the same synthetic-baseline limitations apply.
 
+## Hard synthetic set and relaxed queries
+
+Paperless full-text search only returns documents containing every query word,
+so "latest facture" or a word the document never uses returns nothing. The
+original synthetic archive scores any matching word, which hid this. `-set hard`
+adds 17 fictional cases (14 answerable, 5 of them holdout; 3 no-match) under a
+simplified all-words proxy: each query word must start a document word. It
+approximates stemming but is not Paperless's Whoosh index (no stopwords, field
+queries or real analyzer; result order comes from the demo scorer), so "plain
+keyword search finds none of the answerable documents" holds for the proxy,
+not necessarily for a real index. The same agent that designed the change
+wrote these cases, so they are development evidence, not an independent test.
+
+Relaxed queries (Paperlens retries without filler words and with the longest
+distinct words alone, keeping at least two searches for the model) plus a
+prompt that explains the all-words rule were compared with the previous
+pipeline in six interleaved live pairs, `gpt-6-luna` at low effort, CLI 1.0.109:
+
+| Measure | Before | After |
+|---|---|---|
+| Hard dev Hit@3 (of 9), range | 2–7 | 9 |
+| Hard holdout Hit@3 (of 5), range | 0–3 | 4–5 |
+| Correct no-match decisions | 3/3 every run | 3/3 every run |
+| AI credits per search, mean | 0.0346 | 0.0350 |
+| Latency per search, p50 / p90 | 8.9 s / 10.3 s | 7.7 s / 11.2 s |
+
+On three labelled queries from a separately authorized real archive, the
+previous pipeline found none in every run; this one found 1 of 3 in five of
+six runs. The queries and documents are not published. A
+pre-registered guard of zero keyword fallbacks was missed once (1 fallback in
+six runs, against 3 for the previous pipeline on the same query).
+
+All-caps query tokens of 2 to 6 characters (at most three; tokens with digits
+or in an all-caps query only up to 3 characters) are then passed to the model
+as `possible_acronyms`, a hint it may reject for ordinary words. The prompt
+requires a search with the spelled-out form before answering from prefetched
+excerpts, within the remaining searches. In six interleaved live pairs on 8
+real-archive queries, Hit@3 went from 3–4 to 5–7 per run (median +2.5). The
+hard synthetic set stayed at 9/9 dev (once 8/9) and 3/3 no-match; AI credits
+per search rose about 9% and p50 latency 6%.
+
+Limits of this evidence:
+
+- Five of the 8 queries were chosen because they contained an acronym the
+  document spells out: they were proposed from the archive by the agent and
+  confirmed by the owner. The result shows the targeted failure is fixed, not
+  how search behaves across typical queries.
+- The 2 queries labelled holdout were seen in a diagnostic run before the
+  change was designed, so they are development cases.
+- The six runs repeat the same 8 queries. They measure run-to-run variation,
+  not coverage.
+- The pre-registered guard "no more keyword fallbacks than before" failed:
+  7 against 6. The change was kept for its Hit@3 gain, as a stated trade-off.
+- After these runs, review fixes changed behavior without a new live
+  measurement: a model search can now fetch the full page of a query that a
+  relaxed retry truncated, retries keep the original query's excerpt window,
+  retries never take the slots reserved for model searches (smaller retries
+  with small candidate budgets), retries keep the user's accents (folding is
+  only used to drop filler words), a no-match answer is marked non-exhaustive
+  when a truncated retry was never fetched in full, and the acronym hint is
+  capped and phrased as optional. Deterministic tests cover each fix.
+
+An independent set of unseen queries is needed for broader claims.
+
+Some searches still fall back to keyword results because the model's quote or
+document choice fails evidence validation. `-set hard` and `-private` reports
+classify the reason per case (`reject`) and separate documents Paperless
+returned, documents shown to the model, and excerpts it read, without logging
+any content.
+
 ## In-app WebKit origin regression
 
 The real in-app browser reproduced a rejected HTMX submission at the correct

@@ -104,6 +104,9 @@ type Output struct {
 	Candidates, Calls int
 	Limited           bool
 	Vocabulary        paperless.Vocabulary
+	// Others are retrieved candidates an evidence-ranked search did not select,
+	// in keyword order, so a document the model missed stays reachable.
+	Others []Result
 	// Usage is set on every return from Run, including errors.
 	Usage Usage
 }
@@ -130,9 +133,16 @@ type job struct {
 	calls     int
 	limited   bool
 	stage     func(string)
-	queries   map[string]bool
-	reserve   int
-	seed      Seed
+	// queries maps each fetched query to its page size; 0 means a full page.
+	queries map[string]int
+	// cut holds relaxed queries that Paperless reported more results for and
+	// no full search has fetched since.
+	cut     map[string]bool
+	reserve int
+	// modelReserve slots stay free for model searches; relaxPage bounds each
+	// automatic relaxed query.
+	modelReserve, relaxPage int
+	seed                    Seed
 }
 
 // Run never relaxes explicit filters and never sends excluded metadata to the agent.
@@ -194,11 +204,26 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			}
 		}()
 	}
-	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]bool{}}
+	j = &job{api: e.API, filters: f, vocab: v, excluded: excluded, knownTags: map[int]bool{}, limits: e.Limits, docs: map[int]paperless.Document{}, ranks: map[int]float64{}, evidence: map[int][]string{}, stage: stage, queries: map[string]int{}}
+	var relaxed []string
 	if useAI && e.Limits.Searches > 1 {
 		// Keep room for model expansions so a broad original query cannot
 		// occupy every candidate slot before they run.
-		j.reserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+		j.modelReserve = min(e.Limits.Candidates-1, (e.Limits.Candidates+3)/4)
+		j.reserve = j.modelReserve
+		// Paperless requires every query word, so a document missing one word
+		// (or a filler word like "latest") is never retrieved. Relaxed queries
+		// get at most half of the non-model slots and always leave the model
+		// two searches.
+		relaxed = relaxations(query)
+		relaxed = relaxed[:max(0, min(len(relaxed), e.Limits.Searches-3))]
+		if room := e.Limits.Candidates - j.modelReserve; len(relaxed) > 0 {
+			j.relaxPage = min(relaxedPage, room/(2*len(relaxed)))
+			if j.relaxPage < 1 {
+				relaxed = nil
+			}
+		}
+		j.reserve = min(e.Limits.Candidates-1, j.reserve+len(relaxed)*j.relaxPage)
 	}
 	for _, t := range v.Tags {
 		j.knownTags[t.ID] = true
@@ -226,6 +251,14 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 			stage("Finding and checking evidence")
 		}
 		mark = time.Now()
+		for _, q := range relaxed {
+			if _, err := j.search(ctx, q, j.relaxPage); err != nil {
+				if ctx.Err() != nil {
+					return Output{}, ctx.Err()
+				}
+				break
+			}
+		}
 		j.prefetch(ctx, query)
 		prefetchTime = time.Since(mark)
 		mark = time.Now()
@@ -284,9 +317,23 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 					return x.Document.Created > y.Document.Created
 				})
 			}
+			// A no-match answer is only exhaustive if every relaxed probe was.
+			if len(out.Results) == 0 && len(j.cut) > 0 {
+				j.limited = true
+			}
 			for _, r := range j.fallback(query) {
 				if r.Excluded {
 					out.Results = append(out.Results, r)
+				}
+			}
+			shown := map[int]bool{}
+			for _, r := range out.Results {
+				shown[r.Document.ID] = true
+			}
+			for _, r := range j.fallback(query) {
+				if !shown[r.Document.ID] {
+					r.Reason = "Retrieved but not selected by AI. Keyword match only; not checked."
+					out.Others = append(out.Others, r)
 				}
 			}
 		}
@@ -315,6 +362,20 @@ func (j *job) Lookup() paperless.Vocabulary {
 	return v
 }
 func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
+	return j.search(ctx, query, 0)
+}
+
+// relaxedPage is the most top documents one relaxed query may add.
+const relaxedPage = 5
+
+// search runs one Paperless query. page > 0 is an automatic relaxed query: it
+// keeps only that many top results, never takes the model's reserved slots,
+// keeps the excerpt window of documents already retrieved for the original
+// query, and records truncation in cut instead of marking the job limited,
+// since truncation is intended; Run marks a no-match answer limited if any
+// relaxed query remains cut. A later full-page search of the same text fetches
+// the rest.
+func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -323,7 +384,8 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 500 {
 		return nil, errors.New("query exceeds limit")
 	}
-	if j.queries[query] {
+	prev, fetched := j.queries[query]
+	if fetched && (prev == 0 || (page > 0 && page <= prev)) {
 		return j.candidates(), nil
 	}
 	if j.calls >= j.limits.Searches {
@@ -333,32 +395,53 @@ func (j *job) Search(ctx context.Context, query string) ([]Candidate, error) {
 	capacity := j.limits.Candidates
 	if j.calls == 0 {
 		capacity = max(1, capacity-j.reserve)
+	} else if page > 0 {
+		capacity = max(1, capacity-j.modelReserve)
 	}
 	j.calls++
-	p, err := j.api.Search(ctx, query, j.filters, capacity)
+	size := capacity
+	if page > 0 {
+		size = min(page, capacity)
+	}
+	p, err := j.api.Search(ctx, query, j.filters, size)
 	if err != nil {
 		return nil, err
 	}
-	if p.Next != nil || p.Count > len(p.Results) {
-		j.limited = true
+	more := p.Next != nil || p.Count > len(p.Results)
+	if page == 0 {
+		j.limited = j.limited || more
+		delete(j.cut, query)
+	} else if more {
+		if j.cut == nil {
+			j.cut = map[string]bool{}
+		}
+		j.cut[query] = true
 	}
 	if j.queries == nil {
-		j.queries = map[string]bool{}
+		j.queries = map[string]int{}
 	}
-	j.queries[query] = true
+	j.queries[query] = page
 	seen := map[int]bool{}
 	for n, d := range p.Results {
 		if d.ID < 1 || seen[d.ID] || !j.filters.Matches(d) {
 			continue
 		}
 		seen[d.ID] = true
-		if _, ok := j.docs[d.ID]; !ok && len(j.docs) >= capacity {
+		old, known := j.docs[d.ID]
+		if !known && len(j.docs) >= capacity {
 			j.limited = true
 			continue
 		}
-		d.Content = excerptWindow(d.Content, query, j.limits.Characters)
+		if known && page > 0 {
+			d.Content = old.Content
+		} else {
+			d.Content = excerptWindow(d.Content, query, j.limits.Characters)
+		}
 		j.docs[d.ID] = d
-		j.ranks[d.ID] += 1 / float64(60+n+1)
+		// An upgraded truncated query already ranked its first prev results.
+		if !fetched || n >= prev {
+			j.ranks[d.ID] += 1 / float64(60+n+1)
+		}
 	}
 	return j.candidates(), nil
 }
@@ -517,6 +600,43 @@ var accentFold = strings.NewReplacer("é", "e", "è", "e", "ê", "e", "ë", "e",
 func Latest(q string) bool {
 	q = Fold(q)
 	return strings.Contains(q, "latest") || strings.Contains(q, "newest") || strings.Contains(q, "dernier") || strings.Contains(q, "recent")
+}
+
+const filler = " latest newest recent dernier derniere derniers dernieres find trouve trouver my mon ma mes the a an of for to in on with and or la le les l de du des d un une et ou pour avec en au aux sur "
+
+// relaxations returns at most two shorter queries for a multi-word query: the
+// query without filler words, then its longest non-numeric words alone. Words
+// keep their accents, since a Paperless index may not fold them; Fold is only
+// used to recognize filler and duplicate words.
+func relaxations(q string) []string {
+	all := strings.FieldsFunc(strings.ToLower(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	var kept []string
+	for _, w := range all {
+		if !strings.Contains(filler, " "+Fold(w)+" ") {
+			kept = append(kept, w)
+		}
+	}
+	var out []string
+	if len(kept) > 0 && len(kept) < len(all) {
+		out = append(out, strings.Join(kept, " "))
+	}
+	if len(kept) < 2 {
+		return out
+	}
+	var terms []string
+	for _, w := range kept {
+		if len([]rune(w)) >= 4 && strings.ContainsFunc(w, unicode.IsLetter) && !slices.ContainsFunc(terms, func(t string) bool { return Fold(t) == Fold(w) }) {
+			terms = append(terms, w)
+		}
+	}
+	sort.SliceStable(terms, func(a, b int) bool { return len([]rune(terms[a])) > len([]rune(terms[b])) })
+	for _, t := range terms {
+		if len(out) >= 2 {
+			break
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // TitleScore protects direct title/filename relevance from incidental OCR hits.
