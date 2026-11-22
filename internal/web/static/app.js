@@ -21,6 +21,14 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
   });
 }
 
+// Offline retry reloads the requested URL, keeping its history state.
+document.addEventListener("click", event => {
+  if (event.target instanceof Element && event.target.closest("[data-offline-retry]")) {
+    event.preventDefault();
+    window.location.reload();
+  }
+});
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("paperlens", () => ({
     dragging: false,
@@ -384,13 +392,14 @@ document.addEventListener("htmx:after:request", event => {
   document.addEventListener("DOMContentLoaded", () => {
     const state = load();
     render(state.items, state.ok);
-    const restored = history.state?.suppressAutorun === true;
+    const form = document.getElementById("search-form");
+    // The offline page has no search form; keep the flag for the next online load.
+    const restored = Boolean(form) && history.state?.suppressAutorun === true;
     if (restored) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
       const notice = document.querySelector("[data-history-restored]");
       if (notice) notice.hidden = false;
     }
-    const form = document.getElementById("search-form");
     if (!restored && form?.hasAttribute("data-autorun")) {
       const panel = document.querySelector("[data-recent]");
       if (panel) panel.open = false;

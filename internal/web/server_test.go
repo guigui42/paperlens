@@ -502,7 +502,7 @@ func TestInstallableAppShell(t *testing.T) {
 	h := newHarness(t)
 	get := func(path string) (*http.Response, string) {
 		t.Helper()
-		res, err := http.Get(h.origin + path)
+		res, err := h.client.Get(h.origin + path)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -74,8 +74,8 @@ Demo uploads are in memory and disappear when the process restarts.
 - Keyboard and mobile layouts with neutral-gray light/dark themes and muted-blue
   accents across search, uploads, receipts, and previews. Local vendored scripts
   and a CSP without `unsafe-inline` or `unsafe-eval`.
-- Installable on iPhone and Android home screens, with an offline notice and no
-  offline copies of documents. See [Install on your phone](#install-on-your-phone).
+- Installable on iPhone and Android home screens, with an offline notice. The app
+  never caches documents; only files you download stay on the device. See [Install on your phone](#install-on-your-phone).
 
 No existing-document edits, deletes, tagging, scanner control or deployment of
 your Paperless stack.

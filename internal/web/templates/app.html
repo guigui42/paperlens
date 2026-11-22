@@ -3,7 +3,7 @@
 <title>{{.Title}} · Document search</title>
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#22282e" media="(prefers-color-scheme: dark)">
-<link rel="manifest" href="/manifest.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/icons/icon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
@@ -88,8 +88,8 @@ data-search-message="{{if .Running}}Search in progress: {{.Job.State}}.{{else if
 {{template "upload-result" .}}
 {{if .Receipts}}<h2>Recent uploads in this browser</h2><ul class="receipt-list">{{range .Receipts}}<li><a href="/uploads/{{.ID}}">{{.State}}</a><time>{{.Created.Format "02 Jan 15:04"}}</time></li>{{end}}</ul>{{end}}
 </main>{{template "foot" .}}{{end}}
-{{define "offline"}}{{template "head" .}}<main id="main" class="narrow"><h1>You're offline.</h1><p class="lede">Paperlens needs a connection to your archive. Documents are never saved on this device for offline use.</p>
-<p class="offline-actions"><a class="button primary" href="/">Try again</a></p></main>{{template "foot" .}}{{end}}
+{{define "offline"}}{{template "head" .}}<main id="main" class="narrow"><h1>You're offline.</h1><p class="lede">Paperlens needs a connection to your archive. This app does not cache your documents; only files you download stay on this device.</p>
+<p class="offline-actions"><a class="button primary" href="" data-offline-retry>Try again</a></p></main>{{template "foot" .}}{{end}}
 {{define "receipt"}}{{template "head" .}}<main id="main" class="narrow"><a class="back" href="/upload">← Uploads</a><h1>Upload status</h1>{{template "upload-result" .}}</main>{{template "foot" .}}{{end}}
 {{define "upload-result"}}<div id="upload-result" aria-live="polite" class="upload-status" {{if eq .Receipt.State "processing"}}hx-get="/uploads/{{.Receipt.ID}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
 {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}

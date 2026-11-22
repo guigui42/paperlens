@@ -504,5 +504,32 @@ test("installable shell works offline without caching private data", async ({ pa
     await context.setOffline(false);
   }
   await page.getByRole("link", { name: "Try again" }).click();
-  await expect(page.getByLabel("Search your documents")).toBeVisible();
+  await expect(page).toHaveURL("/upload");
+  await expect(page.getByRole("heading", { name: "Upload a document" })).toBeVisible();
+});
+
+test("offline Back/Forward keeps a restored search from rerunning later", async ({ page, context }) => {
+  await page.waitForFunction(async () => (await navigator.serviceWorker.ready) && navigator.serviceWorker.controller !== null);
+  for (const query of ["home insurance", "electricity"]) {
+    await page.getByLabel("Search your documents").fill(query);
+    await page.getByLabel("Search your documents").press("Enter");
+    await expect(page.getByRole("heading", { name: /Documents for/ })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp("q=" + query.replace(" ", "\\+")));
+  }
+  await context.setOffline(true);
+  try {
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "You're offline." })).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+  const searches = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/search") searches.push(request.url());
+  });
+  await page.getByRole("link", { name: "Try again" }).click();
+  await expect(page.getByLabel("Search your documents")).toHaveValue("home insurance");
+  await expect(page.getByText("Search restored from browser history.")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(searches).toEqual([]);
 });
