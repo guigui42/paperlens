@@ -132,6 +132,9 @@ type job struct {
 	stage     func(string)
 	// queries maps each fetched query to its page size; 0 means a full page.
 	queries map[string]int
+	// cut holds relaxed queries that Paperless reported more results for and
+	// no full search has fetched since.
+	cut     map[string]bool
 	reserve int
 	// modelReserve slots stay free for model searches; relaxPage bounds each
 	// automatic relaxed query.
@@ -311,6 +314,10 @@ func (e *Engine) Run(ctx context.Context, query string, f paperless.Filters, key
 					return x.Document.Created > y.Document.Created
 				})
 			}
+			// A no-match answer is only exhaustive if every relaxed probe was.
+			if len(out.Results) == 0 && len(j.cut) > 0 {
+				j.limited = true
+			}
 			for _, r := range j.fallback(query) {
 				if r.Excluded {
 					out.Results = append(out.Results, r)
@@ -351,8 +358,10 @@ const relaxedPage = 5
 // search runs one Paperless query. page > 0 is an automatic relaxed query: it
 // keeps only that many top results, never takes the model's reserved slots,
 // keeps the excerpt window of documents already retrieved for the original
-// query, and does not mark the job limited, since truncation is intended. A
-// later full-page search of the same text fetches the rest.
+// query, and records truncation in cut instead of marking the job limited,
+// since truncation is intended; Run marks a no-match answer limited if any
+// relaxed query remains cut. A later full-page search of the same text fetches
+// the rest.
 func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -385,8 +394,15 @@ func (j *job) search(ctx context.Context, query string, page int) ([]Candidate, 
 	if err != nil {
 		return nil, err
 	}
-	if page == 0 && (p.Next != nil || p.Count > len(p.Results)) {
-		j.limited = true
+	more := p.Next != nil || p.Count > len(p.Results)
+	if page == 0 {
+		j.limited = j.limited || more
+		delete(j.cut, query)
+	} else if more {
+		if j.cut == nil {
+			j.cut = map[string]bool{}
+		}
+		j.cut[query] = true
 	}
 	if j.queries == nil {
 		j.queries = map[string]int{}
@@ -576,12 +592,14 @@ func Latest(q string) bool {
 const filler = " latest newest recent dernier derniere derniers dernieres find trouve trouver my mon ma mes the a an of for to in on with and or la le les l de du des d un une et ou pour avec en au aux sur "
 
 // relaxations returns at most two shorter queries for a multi-word query: the
-// query without filler words, then its longest non-numeric words alone.
+// query without filler words, then its longest non-numeric words alone. Words
+// keep their accents, since a Paperless index may not fold them; Fold is only
+// used to recognize filler and duplicate words.
 func relaxations(q string) []string {
-	all := strings.FieldsFunc(Fold(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	all := strings.FieldsFunc(strings.ToLower(q), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	var kept []string
 	for _, w := range all {
-		if !strings.Contains(filler, " "+w+" ") {
+		if !strings.Contains(filler, " "+Fold(w)+" ") {
 			kept = append(kept, w)
 		}
 	}
@@ -594,7 +612,7 @@ func relaxations(q string) []string {
 	}
 	var terms []string
 	for _, w := range kept {
-		if len([]rune(w)) >= 4 && strings.ContainsFunc(w, unicode.IsLetter) && !slices.Contains(terms, w) {
+		if len([]rune(w)) >= 4 && strings.ContainsFunc(w, unicode.IsLetter) && !slices.ContainsFunc(terms, func(t string) bool { return Fold(t) == Fold(w) }) {
 			terms = append(terms, w)
 		}
 	}

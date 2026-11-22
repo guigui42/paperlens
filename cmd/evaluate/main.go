@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/guigui42/paperlens/internal/config"
@@ -22,6 +26,41 @@ func fail(v ...any) {
 	os.Exit(1)
 }
 
+// parseLabels requires an explicit nonnegative expected ID per case so a
+// missing, misspelled or null field is not scored as a no-match label.
+func parseLabels(raw []byte) ([]evaluation.Case, error) {
+	var labels []struct {
+		Query    string `json:"query"`
+		Expected *int   `json:"expected"`
+		Holdout  bool   `json:"holdout"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&labels); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("unexpected data after the label array")
+	}
+	if len(labels) == 0 {
+		return nil, errors.New("no labelled cases")
+	}
+	cases := make([]evaluation.Case, len(labels))
+	for i, l := range labels {
+		if strings.TrimSpace(l.Query) == "" {
+			return nil, fmt.Errorf("case %d: query is required", i)
+		}
+		if l.Expected == nil {
+			return nil, fmt.Errorf("case %d: expected is required (document ID, or 0 for no match)", i)
+		}
+		if *l.Expected < 0 {
+			return nil, fmt.Errorf("case %d: expected must be a document ID or 0 for no match", i)
+		}
+		cases[i] = evaluation.Case{Query: l.Query, Expected: *l.Expected, Holdout: l.Holdout}
+	}
+	return cases, nil
+}
+
 func main() {
 	live := flag.Bool("live", false, "use explicitly configured Copilot identity; incurs model usage")
 	set := flag.String("set", "synthetic", "synthetic (gated contract set) or hard (strict-keyword synthetic set, ungated)")
@@ -35,6 +74,12 @@ func main() {
 	limits := evaluation.DefaultLimits
 	var c config.Config
 	if *live || *private != "" {
+		if !*live {
+			// The fake agent needs no Copilot identity; skip AI configuration checks.
+			if err := os.Setenv("PAPERLENS_AI", "false"); err != nil {
+				fail(err)
+			}
+		}
 		var err error
 		if c, err = config.Load(); err != nil {
 			fail(err)
@@ -81,8 +126,8 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		var cases []evaluation.Case
-		if err := json.Unmarshal(raw, &cases); err != nil {
+		cases, err := parseLabels(raw)
+		if err != nil {
 			fail("private labels:", err)
 		}
 		client, err := paperless.New(c.PaperlessURL, c.PaperlessToken)

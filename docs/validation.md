@@ -164,8 +164,10 @@ Limits of this evidence:
   measurement: a model search can now fetch the full page of a query that a
   relaxed retry truncated, retries keep the original query's excerpt window,
   retries never take the slots reserved for model searches (smaller retries
-  with small candidate budgets), and the acronym hint is capped and phrased
-  as optional. Deterministic tests cover each fix.
+  with small candidate budgets), retries keep the user's accents (folding is
+  only used to drop filler words), a no-match answer is marked non-exhaustive
+  when a truncated retry was never fetched in full, and the acronym hint is
+  capped and phrased as optional. Deterministic tests cover each fix.
 
 An independent set of unseen queries is needed for broader claims.
 

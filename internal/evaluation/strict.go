@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -24,36 +25,56 @@ func words(s string) []string {
 // document never uses.
 type Strict struct{ paperless.API }
 
-// Search keeps only demo results where every query word starts a document word.
+// Search keeps the documents where every query word starts a document word.
+// It filters the whole archive, because the demo scorer ignores short words
+// and stopwords ("82", "the") and would hide documents that contain them.
 func (s Strict) Search(ctx context.Context, q string, f paperless.Filters, limit int) (paperless.Page, error) {
 	p, err := s.API.Search(ctx, q, f, 100)
 	if err != nil {
 		return p, err
 	}
+	scored := map[int]int{}
+	for i, d := range p.Results {
+		scored[d.ID] = i
+	}
 	terms := words(q)
-	out := paperless.Page{Results: []paperless.Document{}}
-	for _, d := range p.Results {
-		tokens := words(d.Title + " " + d.Content)
-		all := true
-		for _, t := range terms {
-			if !slices.ContainsFunc(tokens, func(w string) bool { return strings.HasPrefix(w, t) }) {
-				all = false
-				break
+	var matches []paperless.Document
+	// Fixture IDs are contiguous from 1.
+	for id := 1; ; id++ {
+		d, err := s.Document(ctx, id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return paperless.Page{}, ctx.Err()
 			}
+			break
 		}
-		if !all {
-			continue
+		if i, ok := scored[id]; ok {
+			d = p.Results[i]
 		}
-		out.Count++
-		if len(out.Results) < limit {
-			out.Results = append(out.Results, d)
+		if len(terms) > 0 && f.Matches(d) && hasAll(terms, words(d.Title+" "+d.Content)) {
+			matches = append(matches, d)
 		}
 	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		a, aok := scored[matches[i].ID]
+		b, bok := scored[matches[j].ID]
+		return aok && (!bok || a < b)
+	})
+	out := paperless.Page{Count: len(matches), Results: append([]paperless.Document{}, matches[:min(max(limit, 0), len(matches))]...)}
 	if out.Count > len(out.Results) {
 		next := "?page=2"
 		out.Next = &next
 	}
 	return out, nil
+}
+
+func hasAll(terms, tokens []string) bool {
+	for _, t := range terms {
+		if !slices.ContainsFunc(tokens, func(w string) bool { return strings.HasPrefix(w, t) }) {
+			return false
+		}
+	}
+	return true
 }
 
 // recorder notes every document ID Paperless returned during one search job,

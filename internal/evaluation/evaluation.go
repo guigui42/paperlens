@@ -60,7 +60,10 @@ type CaseResult struct {
 	Mode     string  `json:"mode"`
 	Calls    int     `json:"calls"`
 	NanoAIU  float64 `json:"nano_aiu"`
-	Seconds  float64 `json:"seconds"`
+	// Credits is search.Usage.Status: unavailable or partial billing makes
+	// NanoAIU unknown or a lower bound, never a zero cost.
+	Credits string  `json:"credits"`
+	Seconds float64 `json:"seconds"`
 	// Reject classifies why the engine would refuse the agent's ranking.
 	Reject string `json:"reject,omitempty"`
 }
@@ -73,34 +76,49 @@ type Score struct {
 
 // Detailed is an ungated per-case report for iterating on search quality.
 type Detailed struct {
-	Kind           string `json:"kind"`
-	Limits         search.Limits
-	Dev, Holdout   Score
-	NanoAIU        float64      `json:"nano_aiu"`
+	Kind         string `json:"kind"`
+	Limits       search.Limits
+	Dev, Holdout Score
+	NanoAIU      float64 `json:"nano_aiu"`
+	// Credits is the billing status across all cases, including a failed one.
+	Credits        string       `json:"credits"`
 	ElapsedSeconds float64      `json:"elapsed_seconds"`
 	Cases          []CaseResult `json:"cases"`
 }
 
+// addUsage sums usage so Status marks a total with any unbilled call partial.
+func addUsage(a, b search.Usage) search.Usage {
+	return search.Usage{Inference: a.Inference || b.Inference, Calls: a.Calls + b.Calls, Reported: a.Reported + b.Reported,
+		Partial: a.Partial || b.Partial, NanoAIU: a.NanoAIU + b.NanoAIU}
+}
+
 // Evaluate runs each case through the production engine. Fallbacks count as
-// misses, as in Run.
-func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, excluded []string, limits search.Limits, cases []Case, kind string) (Detailed, error) {
+// misses, as in Run. On error the partial report still includes the failed
+// case's AI usage and the elapsed time.
+func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, excluded []string, limits search.Limits, cases []Case, kind string) (report Detailed, err error) {
 	start := time.Now()
 	rec := &recorder{API: api}
 	agent, diag := diagnose(agent)
 	e := search.Engine{API: rec, Agent: agent, Limits: limits, ExcludedTags: excluded}
-	report := Detailed{Kind: kind, Limits: limits, Cases: []CaseResult{}}
+	report = Detailed{Kind: kind, Limits: limits, Cases: []CaseResult{}}
+	var usage search.Usage
+	defer func() {
+		report.NanoAIU, report.Credits = usage.NanoAIU, usage.Status()
+		report.ElapsedSeconds = time.Since(start).Seconds()
+	}()
 	for _, c := range cases {
 		rec.reset()
 		caseStart := time.Now()
 		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		out, err := e.Run(jobCtx, c.Query, paperless.Filters{}, false, nil)
 		cancel()
+		usage = addUsage(usage, out.Usage)
 		if err != nil {
 			return report, fmt.Errorf("case %q: %w", c.Query, err)
 		}
 		d := diag.take()
 		r := CaseResult{Query: c.Query, Expected: c.Expected, Holdout: c.Holdout, Mode: out.Mode, Calls: out.Calls,
-			NanoAIU: out.Usage.NanoAIU, Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: d.reason}
+			NanoAIU: out.Usage.NanoAIU, Credits: out.Usage.Status(), Seconds: time.Since(caseStart).Seconds(), Top: []int{}, Reject: d.reason}
 		var kept []int
 		for _, res := range out.Results {
 			if !res.Excluded {
@@ -124,7 +142,8 @@ func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, exclud
 		}
 		if c.Expected == 0 {
 			s.NoMatch++
-			if len(kept) == 0 && ranked {
+			// Excluded keyword matches are still displayed, so they count.
+			if len(out.Results) == 0 && ranked {
 				s.CorrectNoMatch++
 			}
 		} else {
@@ -140,10 +159,8 @@ func Evaluate(ctx context.Context, api paperless.API, agent search.Agent, exclud
 				s.Hit3++
 			}
 		}
-		report.NanoAIU += r.NanoAIU
 		report.Cases = append(report.Cases, r)
 	}
-	report.ElapsedSeconds = time.Since(start).Seconds()
 	return report, nil
 }
 

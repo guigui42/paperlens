@@ -342,3 +342,35 @@ func TestRelaxedQueriesLeaveModelCandidateSlots(t *testing.T) {
 		t.Fatal("relaxed queries left no candidate slot for the model")
 	}
 }
+
+func TestRelaxedQueriesKeepAccents(t *testing.T) {
+	api := &queryLog{API: demo.New()}
+	e := engine(agentFunc(func(context.Context, string, search.Tools) (search.Ranking, error) {
+		return search.Ranking{Results: []search.Pick{}}, nil
+	}))
+	e.API = api
+	if _, err := e.Run(context.Background(), "Dernière facture Électricité", paperless.Filters{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Dernière facture Électricité", "facture électricité", "électricité"}
+	if strings.Join(api.queries, "|") != strings.Join(want, "|") {
+		t.Fatalf("queries %q", api.queries)
+	}
+}
+
+func TestNoMatchAfterTruncatedRelaxedQueryIsLimited(t *testing.T) {
+	api := scripted{pages: map[string][]paperless.Document{"militaire": docs(1, 10, "militaire")}}
+	for _, fetch := range []bool{false, true} {
+		e := &search.Engine{API: api, Limits: search.Limits{Searches: 6, Candidates: 40, Excerpts: 6, Characters: 2500},
+			Agent: agentFunc(func(ctx context.Context, q string, tools search.Tools) (search.Ranking, error) {
+				if fetch {
+					tools.Search(ctx, "militaire")
+				}
+				return search.Ranking{Results: []search.Pick{}}, nil
+			})}
+		out, err := e.Run(context.Background(), "service militaire", paperless.Filters{}, false, nil)
+		if err != nil || out.Limited == fetch {
+			t.Fatalf("full fetch %v: limited %v, %v", fetch, out.Limited, err)
+		}
+	}
+}

@@ -57,13 +57,7 @@ func (t *diagTools) Excerpt(ctx context.Context, id int) (search.Evidence, error
 // no query, title or OCR text.
 func (t *diagTools) reason(r search.Ranking, err error) string {
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return "agent_timeout"
-		}
-		if strings.Contains(err.Error(), "invalid ranking") || strings.Contains(err.Error(), "results array") || strings.Contains(err.Error(), "trailing output") {
-			return "invalid_json"
-		}
-		return "agent_error"
+		return errReason(err)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -89,6 +83,16 @@ func (t *diagTools) reason(r search.Ranking, err error) string {
 	return ""
 }
 
+func errReason(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "agent_timeout"
+	}
+	if strings.Contains(err.Error(), "invalid ranking") || strings.Contains(err.Error(), "results array") || strings.Contains(err.Error(), "trailing output") {
+		return "invalid_json"
+	}
+	return "agent_error"
+}
+
 // diagnosis is what one ranking job showed the agent, and why the engine
 // would reject its answer.
 type diagnosis struct {
@@ -111,6 +115,10 @@ func (a *diagAgent) record(t *diagTools, r search.Ranking, err error) {
 		d.read[id] = true
 	}
 	t.mu.Unlock()
+	a.set(d)
+}
+
+func (a *diagAgent) set(d diagnosis) {
 	a.mu.Lock()
 	a.last = d
 	a.mu.Unlock()
@@ -131,12 +139,18 @@ func (a *diagAgent) Rank(ctx context.Context, q string, t search.Tools) (search.
 	return r, err
 }
 
-// diagStarter preserves the inner agent's overlapped start-up.
+// diagStarter preserves the inner agent's overlapped start-up. A failed
+// start-up never reaches Rank, so it is recorded here. The engine awaits Begin
+// before Run returns, so Evaluate's take sees it.
 type diagStarter struct{ *diagAgent }
 
 func (a diagStarter) Begin(ctx context.Context) (search.Run, error) {
 	run, err := a.inner.(search.Starter).Begin(ctx)
-	if err != nil {
+	if err != nil || run == nil {
+		if err == nil {
+			err = search.ErrAIRuntime
+		}
+		a.set(diagnosis{reason: errReason(err)})
 		return nil, err
 	}
 	return diagRun{run, a.diagAgent}, nil
